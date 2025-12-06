@@ -51,7 +51,7 @@ const CalculationLog: React.FC<CalculationLogProps> = ({logs, stats, isCalculati
                             <span>Iteration</span>
                         </div>
                         <span className="text-green-400 font-bold">
-                            #{stats ? stats.attempt : 0} <span className="text-slate-600">/ 50</span>
+                            #{stats ? stats.attempt : 0} <span className="text-slate-600">/ {stats ? stats.maxAttempts : 100}</span>
                         </span>
                     </div>
 
@@ -119,7 +119,7 @@ const CalculationLog: React.FC<CalculationLogProps> = ({logs, stats, isCalculati
                             <div className="w-full bg-slate-800 h-1 rounded overflow-hidden">
                                 <div
                                     className="bg-green-500 h-full transition-all duration-100"
-                                    style={{width: stats ? `${(stats.attempt / 50) * 100}%` : '0%'}}
+                                    style={{width: stats ? `${(stats.attempt / stats.maxAttempts) * 100}%` : '0%'}}
                                 />
                             </div>
                         </div>

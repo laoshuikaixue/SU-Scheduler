@@ -19,7 +19,12 @@ export const canAssign = (student: Student, task: TaskDefinition): { valid: bool
         }
     }
 
-    // 3. 晚自习年级冲突检查
+    // 3. 上午眼保健操高三不参与检查
+    if (task.timeSlot === TimeSlot.EYE_AM && student.grade === 3) {
+        return {valid: false, reason: '高三不参与该项检查'};
+    }
+
+    // 4. 晚自习年级冲突检查
     if (task.forbiddenGrade && student.grade === task.forbiddenGrade) {
         return {valid: false, reason: '需避嫌(本年级)'};
     }
@@ -597,6 +602,7 @@ export const autoScheduleMultiGroup = (
 
 export interface CalculationStats {
     attempt: number;
+    maxAttempts: number; // 新增：最大尝试次数
     coverage: number;
     totalSlots: number;
     variance: number;
@@ -626,6 +632,7 @@ export const autoScheduleMultiGroupAsync = async (
 
     onProgress(`初始化完成，准备进行 ${MAX_RETRIES} 次尝试...`, {
         attempt: 0,
+        maxAttempts: MAX_RETRIES,
         coverage: 0,
         totalSlots,
         variance: 0,
@@ -753,6 +760,7 @@ export const autoScheduleMultiGroupAsync = async (
 
         const currentStats: CalculationStats = {
             attempt: attempt + 1,
+            maxAttempts: MAX_RETRIES,
             coverage: filledCount,
             totalSlots,
             variance: currentLoadVariance,
@@ -786,6 +794,7 @@ export const autoScheduleMultiGroupAsync = async (
 
     onProgress(`计算完成。最终覆盖率: ${maxFilledCount}/${totalSlots}`, {
         attempt: MAX_RETRIES,
+        maxAttempts: MAX_RETRIES,
         coverage: maxFilledCount,
         totalSlots,
         variance: minLoadVariance,
