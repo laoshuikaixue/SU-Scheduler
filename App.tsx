@@ -7,12 +7,13 @@ import { MOCK_STUDENTS, ALL_TASKS } from './constants';
 import { Student, Department, TaskCategory } from './types';
 import { autoScheduleMultiGroup } from './services/scheduler';
 import { formatClassName } from './utils';
-import { Download, Upload, Wand2, FileSpreadsheet, Image as ImageIcon, Users, FileText } from 'lucide-react';
+import { Download, Upload, Wand2, FileSpreadsheet, Image as ImageIcon, Users, FileText, Trash2, FileJson } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import html2canvas from 'html2canvas';
 import saveAs from 'file-saver';
 // @ts-ignore
 import { pinyin } from 'pinyin-pro';
+import Modal from './components/Modal';
 
 const App: React.FC = () => {
   const [students, setStudents] = useState<Student[]>([]);
@@ -26,11 +27,53 @@ const App: React.FC = () => {
   const [includePersonalList, setIncludePersonalList] = useState(false);
   const [imageScale, setImageScale] = useState(2);
   const [targetWidth, setTargetWidth] = useState<'auto' | 'a4' | 'a4_landscape'>('auto');
+  const [clearDialog, setClearDialog] = useState<{ isOpen: boolean, clearStudents: boolean }>({ isOpen: false, clearStudents: false });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const jsonInputRef = useRef<HTMLInputElement>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
+  };
+
+  const handleJSONImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const content = evt.target?.result as string;
+        const data = JSON.parse(content);
+        
+        if (data.students && Array.isArray(data.students)) {
+            setStudents(data.students);
+        }
+        if (data.assignments) {
+            setAssignments(data.assignments);
+        }
+        if (data.groupCount) {
+            setGroupCount(data.groupCount);
+        }
+        
+        showToast('数据导入成功！');
+      } catch (err) {
+        showToast('导入失败：文件格式错误', 'error');
+        console.error(err);
+      }
+      // Reset input
+      if (jsonInputRef.current) jsonInputRef.current.value = '';
+    };
+    reader.readAsText(file);
+  };
+
+  const performClear = () => {
+    setAssignments({});
+    if (clearDialog.clearStudents) {
+        setStudents([]);
+    }
+    setClearDialog({ isOpen: false, clearStudents: false });
+    showToast('数据已清空');
   };
 
   // Init mock data with pinyin
@@ -567,6 +610,20 @@ const App: React.FC = () => {
             <Upload size={16} /> 导入人员
           </button>
 
+          <input 
+            type="file" 
+            ref={jsonInputRef} 
+            className="hidden" 
+            accept=".json" 
+            onChange={handleJSONImport}
+          />
+          <button 
+            onClick={() => jsonInputRef.current?.click()}
+            className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition"
+          >
+            <FileJson size={16} /> 导入数据
+          </button>
+
           <button 
             onClick={handleAutoSchedule}
             className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-blue-600 text-white rounded-md text-sm transition shadow-sm"
@@ -588,6 +645,10 @@ const App: React.FC = () => {
              </button>
              <button onClick={exportJSON} className="p-2 hover:bg-white rounded text-gray-600 hover:text-orange-600 transition" title="导出数据">
                 <Download size={18} />
+             </button>
+             <div className="w-px h-4 bg-gray-300 mx-1"></div>
+             <button onClick={() => setClearDialog({ isOpen: true, clearStudents: false })} className="p-2 hover:bg-white rounded text-gray-600 hover:text-red-600 transition" title="清空所有">
+                <Trash2 size={18} />
              </button>
           </div>
         </div>
@@ -622,102 +683,138 @@ const App: React.FC = () => {
         />
       )}
 
-      {exportDialog.isOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-white rounded-lg shadow-xl p-6 w-80">
-                <h3 className="text-lg font-bold mb-4 text-gray-800">导出设置</h3>
-                
-                <div className="flex items-center gap-3 mb-6">
-                    <input 
-                        type="checkbox" 
-                        id="includePersonal"
-                        checked={includePersonalList}
-                        onChange={(e) => setIncludePersonalList(e.target.checked)}
-                        className="w-5 h-5 text-primary rounded focus:ring-primary cursor-pointer"
-                    />
-                    <label htmlFor="includePersonal" className="text-gray-700 cursor-pointer select-none">
-                        附带个人任务清单
-                    </label>
+      <Modal
+        isOpen={exportDialog.isOpen}
+        onClose={() => setExportDialog({ isOpen: false, type: null })}
+        title="导出设置"
+        footer={
+            <>
+                <button 
+                    onClick={() => setExportDialog({ isOpen: false, type: null })}
+                    className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded text-sm transition"
+                >
+                    取消
+                </button>
+                <button 
+                    onClick={() => {
+                        if(exportDialog.type === 'excel') performExportExcel();
+                        else if(exportDialog.type === 'image') performExportImage();
+                    }}
+                    className="px-4 py-2 bg-primary hover:bg-blue-600 text-white rounded text-sm transition shadow-sm"
+                >
+                    确认导出
+                </button>
+            </>
+        }
+      >
+        <div className="flex items-center gap-3 mb-6">
+            <input 
+                type="checkbox" 
+                id="includePersonal"
+                checked={includePersonalList}
+                onChange={(e) => setIncludePersonalList(e.target.checked)}
+                className="w-5 h-5 text-primary rounded focus:ring-primary cursor-pointer"
+            />
+            <label htmlFor="includePersonal" className="text-gray-700 cursor-pointer select-none">
+                附带个人任务清单
+            </label>
+        </div>
+
+        {exportDialog.type === 'image' && (
+            <div className="mb-2">
+                <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">页面宽度设置</label>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => setTargetWidth('auto')}
+                            className={`flex-1 py-1.5 text-sm border rounded transition ${
+                                targetWidth === 'auto'
+                                ? 'bg-primary text-white border-primary'
+                                : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                            }`}
+                        >
+                            自动
+                        </button>
+                        <button
+                            onClick={() => setTargetWidth('a4')}
+                            className={`flex-1 py-1.5 text-sm border rounded transition ${
+                                targetWidth === 'a4'
+                                ? 'bg-primary text-white border-primary'
+                                : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                            }`}
+                        >
+                            A4 竖向
+                        </button>
+                        <button
+                            onClick={() => setTargetWidth('a4_landscape')}
+                            className={`flex-1 py-1.5 text-sm border rounded transition ${
+                                targetWidth === 'a4_landscape'
+                                ? 'bg-primary text-white border-primary'
+                                : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                            }`}
+                        >
+                            A4 横向
+                        </button>
+                    </div>
                 </div>
 
-                {exportDialog.type === 'image' && (
-                    <div className="mb-6">
-                        <div className="mb-4">
-                            <label className="block text-sm font-medium text-gray-700 mb-2">页面宽度设置</label>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={() => setTargetWidth('auto')}
-                                    className={`flex-1 py-1.5 text-sm border rounded transition ${
-                                        targetWidth === 'auto'
-                                        ? 'bg-primary text-white border-primary'
-                                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    自动 (Auto)
-                                </button>
-                                <button
-                                    onClick={() => setTargetWidth('a4')}
-                                    className={`flex-1 py-1.5 text-sm border rounded transition ${
-                                        targetWidth === 'a4'
-                                        ? 'bg-primary text-white border-primary'
-                                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    A4 竖向
-                                </button>
-                                <button
-                                    onClick={() => setTargetWidth('a4_landscape')}
-                                    className={`flex-1 py-1.5 text-sm border rounded transition ${
-                                        targetWidth === 'a4_landscape'
-                                        ? 'bg-primary text-white border-primary'
-                                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    A4 横向
-                                </button>
-                            </div>
-                        </div>
-
-                        <label className="block text-sm font-medium text-gray-700 mb-2">图片尺寸倍率 (清晰度)</label>
-                        <div className="flex gap-2">
-                            {[1, 2, 3, 4].map(scale => (
-                                <button
-                                    key={scale}
-                                    onClick={() => setImageScale(scale)}
-                                    className={`flex-1 py-1.5 text-sm border rounded transition ${
-                                        imageScale === scale 
-                                        ? 'bg-primary text-white border-primary' 
-                                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-                                    }`}
-                                >
-                                    {scale}x
-                                </button>
-                            ))}
-                        </div>
-                        <p className="text-xs text-gray-400 mt-1">倍率越高越清晰，文件也越大</p>
-                    </div>
-                )}
-
-                <div className="flex justify-end gap-3">
-                    <button 
-                        onClick={() => setExportDialog({ isOpen: false, type: null })}
-                        className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded text-sm transition"
-                    >
-                        取消
-                    </button>
-                    <button 
-                        onClick={() => {
-                            if(exportDialog.type === 'excel') performExportExcel();
-                            else if(exportDialog.type === 'image') performExportImage();
-                        }}
-                        className="px-4 py-2 bg-primary hover:bg-blue-600 text-white rounded text-sm transition shadow-sm"
-                    >
-                        确认导出
-                    </button>
+                <label className="block text-sm font-medium text-gray-700 mb-2">图片清晰度</label>
+                <div className="flex gap-2">
+                    {[1, 2, 3, 4].map(scale => (
+                        <button
+                            key={scale}
+                            onClick={() => setImageScale(scale)}
+                            className={`flex-1 py-1.5 text-sm border rounded transition ${
+                                imageScale === scale 
+                                ? 'bg-primary text-white border-primary' 
+                                : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                            }`}
+                        >
+                            {scale}x
+                        </button>
+                    ))}
                 </div>
             </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={clearDialog.isOpen}
+        onClose={() => setClearDialog({ isOpen: false, clearStudents: false })}
+        title="清空数据"
+        footer={
+            <>
+                <button 
+                    onClick={() => setClearDialog({ isOpen: false, clearStudents: false })}
+                    className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded text-sm transition"
+                >
+                    取消
+                </button>
+                <button 
+                    onClick={performClear}
+                    className="px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded text-sm transition shadow-sm"
+                >
+                    确认清空
+                </button>
+            </>
+        }
+      >
+        <div className="text-gray-600 mb-4">
+            确定要清空当前的排期安排吗？此操作不可撤销。
         </div>
-      )}
+        <div className="flex items-center gap-3 p-3 bg-red-50 rounded-lg border border-red-100">
+            <input 
+                type="checkbox" 
+                id="clearStudents"
+                checked={clearDialog.clearStudents}
+                onChange={(e) => setClearDialog(prev => ({ ...prev, clearStudents: e.target.checked }))}
+                className="w-4 h-4 text-red-600 rounded focus:ring-red-500 cursor-pointer"
+            />
+            <label htmlFor="clearStudents" className="text-gray-700 cursor-pointer select-none text-sm font-medium">
+                同时清空人员名单
+            </label>
+        </div>
+      </Modal>
     </div>
   );
 };
