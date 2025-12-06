@@ -29,6 +29,7 @@ export interface Student {
     grade: number; // 1, 2, 3
     classNum: number; // 1-6
     pinyinInitials?: string; // 用于拼音搜索
+    isLeader?: boolean; // 是否为组长
 }
 
 export interface TaskDefinition {

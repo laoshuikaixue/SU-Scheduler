@@ -1,13 +1,15 @@
 import React, {useState} from 'react';
 import {Department, Student} from '../types';
-import {Search, User} from 'lucide-react';
+import {Search, User, Crown} from 'lucide-react';
 import {formatClassName} from '../utils';
 
 interface Props {
     students: Student[];
+    taskCounts: Record<string, number>;
+    onToggleLeader?: (studentId: string) => void;
 }
 
-const StudentList: React.FC<Props> = ({students}) => {
+const StudentList: React.FC<Props> = ({students, taskCounts, onToggleLeader}) => {
     const [filter, setFilter] = useState('');
 
     const onDragStart = (e: React.DragEvent, studentId: string) => {
@@ -48,10 +50,32 @@ const StudentList: React.FC<Props> = ({students}) => {
                         }}
                     >
                         <div className="flex justify-between items-center">
-                            <span className="font-medium text-gray-800">{student.name}</span>
-                            <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
-                {formatClassName(student.grade, student.classNum)}
-              </span>
+                            <div className="flex items-center gap-1">
+                                <span className="font-medium text-gray-800">{student.name}</span>
+                                <button
+                                    onClick={(e) => {
+                                        // 阻止拖拽和事件冒泡
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        onToggleLeader?.(student.id);
+                                    }}
+                                    className={`p-0.5 rounded-full hover:bg-gray-100 transition-colors ${student.isLeader ? 'text-yellow-500' : 'text-gray-300 hover:text-yellow-400'}`}
+                                    title={student.isLeader ? "取消组长" : "设为组长"}
+                                    onMouseDown={(e) => e.stopPropagation()} // 防止触发拖拽
+                                >
+                                    <Crown size={14} fill={student.isLeader ? "currentColor" : "none"} />
+                                </button>
+                            </div>
+                            <div className="flex items-center gap-1">
+                                {(taskCounts[student.id] || 0) > 0 && (
+                                    <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-medium min-w-[20px] text-center" title="当前分配任务数">
+                                        {taskCounts[student.id]}
+                                    </span>
+                                )}
+                                <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
+                                    {formatClassName(student.grade, student.classNum)}
+                                </span>
+                            </div>
                         </div>
                         <div className="text-xs text-gray-500 mt-1 flex items-center">
                             <User size={12} className="mr-1"/> {student.department}

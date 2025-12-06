@@ -66,6 +66,17 @@ const App: React.FC = () => {
     const conflicts = getScheduleConflicts(students, assignments, groupCount);
     const suggestions = getSuggestions(students, conflicts, assignments);
 
+    // 计算每个学生的任务数量
+    const taskCounts = React.useMemo(() => {
+        const counts: Record<string, number> = {};
+        Object.values(assignments).forEach(studentId => {
+            if (studentId) {
+                counts[studentId] = (counts[studentId] || 0) + 1;
+            }
+        });
+        return counts;
+    }, [assignments]);
+
     // 导出对话框状态
     const [exportDialog, setExportDialog] = useState<{
         isOpen: boolean,
@@ -707,6 +718,25 @@ const App: React.FC = () => {
                     const desc = clonedDoc.getElementById('schedule-description');
                     if (desc) desc.style.display = 'none';
 
+                    // 1.1 隐藏校验信息 (如：部门职责不符)
+                    const validationMsgs = clonedDoc.querySelectorAll('.validation-msg');
+                    validationMsgs.forEach((el: any) => el.style.display = 'none');
+
+                    // 1.2 移除错误状态的红色背景
+                    const errorCells = clonedDoc.querySelectorAll('.bg-red-100, .bg-red-50');
+                    errorCells.forEach((el: any) => {
+                        el.classList.remove('bg-red-100');
+                        el.classList.remove('bg-red-50');
+                        el.classList.add('bg-white');
+                    });
+
+                    // 1.3 移除错误状态的红色文字
+                    const errorTexts = clonedDoc.querySelectorAll('.text-red-600');
+                    errorTexts.forEach((el: any) => {
+                        el.classList.remove('text-red-600');
+                        el.classList.add('text-gray-900');
+                    });
+
                     // 2. 添加个人清单和页脚
                     const container = clonedDoc.getElementById('schedule-export-area');
                     if (container) {
@@ -807,6 +837,12 @@ const App: React.FC = () => {
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
         saveAs(blob, "schedule_data.json");
+    };
+
+    const handleToggleLeader = (studentId: string) => {
+        setStudents(prev => prev.map(s =>
+            s.id === studentId ? {...s, isLeader: !s.isLeader} : s
+        ));
     };
 
     return (
@@ -960,7 +996,7 @@ const App: React.FC = () => {
             </header>
 
             <div className="flex flex-1 overflow-hidden">
-                <StudentList students={students}/>
+                <StudentList students={students} taskCounts={taskCounts} onToggleLeader={handleToggleLeader} />
 
                 <main className="flex-1 overflow-auto bg-gray-100 p-6 flex justify-center">
                     <div className="w-full max-w-[1400px] flex flex-col">

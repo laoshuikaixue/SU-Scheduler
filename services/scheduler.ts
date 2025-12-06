@@ -19,6 +19,13 @@ export const canAssign = (student: Student, task: TaskDefinition): { valid: bool
         }
     }
 
+    // New Rule: 包干区所有项目由高二负责 (高三不参与，高一也不参与)
+    if (task.category === TaskCategory.CLEANING) {
+        if (student.grade !== 2) {
+            return {valid: false, reason: '包干区仅限高二'};
+        }
+    }
+
     // 3. 上午眼保健操高三不参与检查
     if (task.timeSlot === TimeSlot.EYE_AM && student.grade === 3) {
         return {valid: false, reason: '高三不参与该项检查'};

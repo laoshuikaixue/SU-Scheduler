@@ -55,6 +55,28 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
         [TaskCategory.EVENING_STUDY]: ALL_TASKS.filter(t => t.category === TaskCategory.EVENING_STUDY),
     };
 
+    // 找到每个组组长出现的第一个任务ID
+    const leaderFirstTaskIds = useMemo(() => {
+        const result: Record<number, string> = {};
+        
+        // 遍历每一组
+        for (let g = 0; g < groupCount; g++) {
+            // 按顺序遍历所有任务
+            for (const task of ALL_TASKS) {
+                const key = `${task.id}::${g}`;
+                const studentId = assignments[key];
+                if (studentId) {
+                    const student = students.find(s => s.id === studentId);
+                    if (student?.isLeader) {
+                        result[g] = task.id;
+                        break; // 找到该组组长的第一个任务，记录并跳出，只标记第一个
+                    }
+                }
+            }
+        }
+        return result;
+    }, [assignments, students, groupCount]);
+
     const handleDragStart = (event: DragStartEvent) => {
         const {active} = event;
         setActiveId(active.id as string);
@@ -176,6 +198,7 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
                                                     groupIndex={g}
                                                     conflict={cellConflict}
                                                     assignments={assignments}
+                                                    isFirstLeaderOccurrence={leaderFirstTaskIds[g] === task.id}
                                                 />
                                             );
                                         })}
@@ -215,7 +238,8 @@ const CellWrapper: React.FC<{
     groupIndex: number;
     conflict?: ConflictInfo;
     assignments: Record<string, string>;
-}> = ({id, student, validation, onAssign, allStudents, task, groupIndex, conflict, assignments}) => {
+    isFirstLeaderOccurrence?: boolean;
+}> = ({id, student, validation, onAssign, allStudents, task, groupIndex, conflict, assignments, isFirstLeaderOccurrence}) => {
     const {setNodeRef, attributes, listeners, isDragging} = useDraggable({
         id: id,
         disabled: !student // 仅当有学生时可拖拽
@@ -235,6 +259,9 @@ const CellWrapper: React.FC<{
     } else if (!validation.valid) {
         // 基础校验失败
         bgClass = 'bg-red-50';
+    } else if (student?.isLeader && isFirstLeaderOccurrence) {
+        // 组长高亮
+        bgClass = 'bg-yellow-200';
     } else if (isOver) {
         bgClass = 'bg-blue-100/50 shadow-inner';
     }
@@ -332,7 +359,7 @@ const CellInput: React.FC<{
               {getDisplayName(value)}
             </span>
                         {!isValid &&
-                            <span className="text-[10px] text-red-500 scale-75 origin-center">{validationMsg}</span>}
+                            <span className="validation-msg text-[10px] text-red-500 scale-75 origin-center">{validationMsg}</span>}
                     </div>
                     <button
                         onPointerDown={(e) => e.stopPropagation()} // 阻止从X按钮开始拖拽
