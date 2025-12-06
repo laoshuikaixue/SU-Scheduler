@@ -1,5 +1,5 @@
 import React from 'react';
-import { SuggestionInfo } from '../services/scheduler';
+import { SuggestionInfo, ConflictInfo } from '../services/scheduler';
 import { ALL_TASKS } from '../constants';
 import { Student } from '../types';
 import { AlertTriangle, CheckCircle2, Lightbulb, XCircle } from 'lucide-react';
@@ -7,9 +7,10 @@ import { AlertTriangle, CheckCircle2, Lightbulb, XCircle } from 'lucide-react';
 interface Props {
   suggestions: SuggestionInfo[];
   students: Student[];
+  onApplySuggestion?: (conflict: ConflictInfo, suggestedStudentId: string) => void;
 }
 
-export const SuggestionsPanel: React.FC<Props> = ({ suggestions, students }) => {
+export const SuggestionsPanel: React.FC<Props> = ({ suggestions, students, onApplySuggestion }) => {
   const getTaskName = (taskId: string) => {
     if (taskId === 'time-conflict') return '时间冲突';
     if (taskId === 'multiple-tasks') return '负载过重';
@@ -79,11 +80,21 @@ export const SuggestionsPanel: React.FC<Props> = ({ suggestions, students }) => 
                             <span className="text-red-500 ml-1">{s.conflict.reason}</span>
                         </div>
                         {s.suggestedReason && (
-                        <div className="ml-4 bg-blue-50 p-2 rounded-md border border-blue-100 flex gap-2 items-start">
-                            <Lightbulb className="w-3 h-3 text-blue-600 mt-0.5 shrink-0" />
-                            <div className="text-xs text-blue-700 leading-tight">
-                                {s.suggestedReason}
+                        <div className="ml-4 bg-blue-50 p-2 rounded-md border border-blue-100 flex flex-col gap-2">
+                            <div className="flex gap-2 items-start">
+                                <Lightbulb className="w-3 h-3 text-blue-600 mt-0.5 shrink-0" />
+                                <div className="text-xs text-blue-700 leading-tight">
+                                    {s.suggestedReason}
+                                </div>
                             </div>
+                            {s.suggestedStudentId && onApplySuggestion && (
+                                <button
+                                    onClick={() => onApplySuggestion(s.conflict, s.suggestedStudentId!)}
+                                    className="self-end px-2 py-1 bg-blue-600 text-white text-[10px] rounded hover:bg-blue-700 transition shadow-sm"
+                                >
+                                    应用
+                                </button>
+                            )}
                         </div>
                         )}
                     </div>

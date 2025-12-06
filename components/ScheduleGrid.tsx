@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { ALL_TASKS } from '../constants';
 import { Student, TaskCategory } from '../types';
-import { ConflictInfo, canAssign } from '../services/scheduler';
+import { ConflictInfo, canAssign, checkGroupAvailability } from '../services/scheduler';
 import { X, AlertTriangle } from 'lucide-react';
 import { formatClassName } from '../utils';
 import { 
@@ -175,6 +175,7 @@ const ScheduleGrid: React.FC<Props> = ({ students, assignments, onAssign, onSwap
                             task={task}
                             groupIndex={g}
                             conflict={cellConflict}
+                            assignments={assignments}
                           />
                         );
                       })}
@@ -212,7 +213,8 @@ const CellWrapper: React.FC<{
     task: any;
     groupIndex: number;
     conflict?: ConflictInfo;
-}> = ({ id, student, validation, onAssign, allStudents, task, groupIndex, conflict }) => {
+    assignments: Record<string, string>;
+}> = ({ id, student, validation, onAssign, allStudents, task, groupIndex, conflict, assignments }) => {
     const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
         id: id,
         disabled: !student // Only draggable if there is a student
@@ -254,6 +256,9 @@ const CellWrapper: React.FC<{
                     onSelect={onAssign}
                     isValid={!conflict && validation.valid}
                     validationMsg={conflict ? conflict.reason : validation.reason}
+                    task={task}
+                    groupIndex={groupIndex}
+                    assignments={assignments}
                 />
             </div>
         </td>
@@ -266,7 +271,10 @@ const CellInput: React.FC<{
   onSelect: (id: string | null) => void;
   isValid: boolean;
   validationMsg?: string;
-}> = ({ value, allStudents, onSelect, isValid, validationMsg }) => {
+  task: any;
+  groupIndex: number;
+  assignments: Record<string, string>;
+}> = ({ value, allStudents, onSelect, isValid, validationMsg, task, groupIndex, assignments }) => {
   const [query, setQuery] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [suggestions, setSuggestions] = useState<Student[]>([]);
@@ -275,17 +283,24 @@ const CellInput: React.FC<{
   useEffect(() => {
     if (isEditing) {
       if (!query) {
-        setSuggestions([]); 
+        const recommended = allStudents.filter(s => {
+            const check = checkGroupAvailability(s, task, groupIndex, assignments);
+            return check.valid;
+        }).slice(0, 5);
+        setSuggestions(recommended);
         return;
       }
       const lowerQ = query.toLowerCase();
-      const matches = allStudents.filter(s => 
-        s.name.includes(query) || 
-        (s.pinyinInitials && s.pinyinInitials.includes(lowerQ))
-      ).slice(0, 5);
+      const matches = allStudents.filter(s => {
+        const nameMatch = s.name.includes(query) || (s.pinyinInitials && s.pinyinInitials.includes(lowerQ));
+        if (!nameMatch) return false;
+        
+        // Also check basic validity for search results (optional, but good UX)
+        return canAssign(s, task).valid;
+      }).slice(0, 5);
       setSuggestions(matches);
     }
-  }, [query, isEditing, allStudents]);
+  }, [query, isEditing, allStudents, task, groupIndex, assignments]);
 
   const handleBlur = () => {
     setTimeout(() => {

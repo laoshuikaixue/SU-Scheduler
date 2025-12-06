@@ -5,7 +5,7 @@ import ScheduleGrid from './components/ScheduleGrid';
 import Toast from './components/Toast';
 import { MOCK_STUDENTS, ALL_TASKS } from './constants';
 import { Student, Department, TaskCategory } from './types';
-import { autoScheduleMultiGroup, getScheduleConflicts, getSuggestions } from './services/scheduler';
+import { autoScheduleMultiGroup, getScheduleConflicts, getSuggestions, ConflictInfo } from './services/scheduler';
 import { formatClassName } from './utils';
 import { Download, Upload, Wand2, FileSpreadsheet, Image as ImageIcon, Users, FileText, Trash2, FileJson } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
@@ -24,7 +24,7 @@ const App: React.FC = () => {
   const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
   
   const conflicts = getScheduleConflicts(students, assignments, groupCount);
-  const suggestions = getSuggestions(students, conflicts);
+  const suggestions = getSuggestions(students, conflicts, assignments);
 
   // Export Dialog State
   const [exportDialog, setExportDialog] = useState<{ isOpen: boolean, type: 'excel' | 'image' | null }>({ isOpen: false, type: null });
@@ -132,6 +132,11 @@ const App: React.FC = () => {
     const newSchedule = autoScheduleMultiGroup(students, {}, groupCount);
     setAssignments(newSchedule);
     showToast(`${groupCount}组自动编排完成！`);
+  };
+
+  const handleApplySuggestion = (conflict: ConflictInfo, suggestedStudentId: string) => {
+    handleAssign(conflict.taskId, conflict.groupId, suggestedStudentId);
+    showToast('已应用建议修改');
   };
 
   const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -710,7 +715,7 @@ const App: React.FC = () => {
         </div>
         </main>
 
-        <SuggestionsPanel suggestions={suggestions} students={students} />
+        <SuggestionsPanel suggestions={suggestions} students={students} onApplySuggestion={handleApplySuggestion} />
       </div>
 
       <footer className="bg-white border-t py-2 px-6 text-center text-xs text-gray-400 shrink-0">

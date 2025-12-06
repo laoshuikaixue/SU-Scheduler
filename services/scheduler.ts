@@ -27,6 +27,81 @@ export const canAssign = (student: Student, task: TaskDefinition): { valid: bool
   return { valid: true };
 };
 
+// 辅助函数: 检查学生是否已经在该组被过度分配或有冲突
+export const checkGroupAvailability = (
+    student: Student,
+    task: TaskDefinition,
+    groupId: number,
+    currentAssignments: Record<string, string>, // key: taskId::groupId
+    conflicts: ConflictInfo[] = []
+): { valid: boolean; reason?: string } => {
+    // 1. 基础资格检查
+    const basicCheck = canAssign(student, task);
+    if (!basicCheck.valid) return basicCheck;
+
+    // 2. 收集该学生在当前组已分配的任务，并检查跨组冲突
+    const assignedTaskIds: string[] = [];
+    let otherGroupAssignment: number | undefined;
+
+    Object.entries(currentAssignments).forEach(([key, sid]) => {
+        if (sid !== student.id) return;
+        const [tid, gStr] = key.split('::');
+        const gId = parseInt(gStr);
+        
+        if (gId === groupId) {
+            // 排除当前正在判断的任务本身，避免自我冲突
+            // 例如: 检查 "是否可以做包干区"，如果已经分配了该包干区，不应算作"已有包干区"的互斥
+            if (tid !== task.id) {
+                assignedTaskIds.push(tid);
+            }
+        } else {
+            otherGroupAssignment = gId;
+        }
+    });
+
+    if (otherGroupAssignment !== undefined) {
+        return { valid: false, reason: `已在第${otherGroupAssignment + 1}组` };
+    }
+
+    // 3. 检查负载 (Max 2)
+    // 特殊情况: 眼操可以允许超载 (>=3) 如果其他条件允许，但此处我们做严格建议，除非是手动分配
+    // 用户反馈 "推荐人会导致冲突"，所以这里应该严格一点
+    if (assignedTaskIds.length >= 2) {
+        // 检查是否允许例外: 已有包干区(1) + 申请眼操(1) -> 允许 -> 2
+        // 如果已经是2了，再加就是3，一般不允许
+        // 除非: 现有任务是 眼操AM + 眼操PM (2) -> 再加? 不行
+        return { valid: false, reason: '负载已满' };
+    }
+
+    // 4. 检查互斥 (包干区 vs 晚自习)
+    const assignedTasks = assignedTaskIds.map(tid => ALL_TASKS.find(t => t.id === tid)!);
+    const hasCleaning = assignedTasks.some(t => t.category === TaskCategory.CLEANING);
+    const hasEvening = assignedTasks.some(t => t.category === TaskCategory.EVENING_STUDY);
+
+    if (task.category === TaskCategory.CLEANING && hasEvening) return { valid: false, reason: '早晚互斥' };
+    if (task.category === TaskCategory.EVENING_STUDY && hasCleaning) return { valid: false, reason: '早晚互斥' };
+    
+    // 5. 检查同类互斥 (一人一个包干区)
+    if (task.category === TaskCategory.CLEANING && hasCleaning) return { valid: false, reason: '已有包干区' };
+    if (task.category === TaskCategory.EVENING_STUDY && hasEvening) return { valid: false, reason: '已有晚自习' };
+
+    // 6. 检查时间冲突
+    // 室内课间操无视时间冲突
+    const isIndoorInterval = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
+    if (!isIndoorInterval) {
+        for (const assignedTask of assignedTasks) {
+            const isAssignedIndoor = assignedTask.category === TaskCategory.INTERVAL_EXERCISE && assignedTask.subCategory === '室内';
+            if (isAssignedIndoor) continue;
+
+            if (assignedTask.timeSlot === task.timeSlot) {
+                return { valid: false, reason: `时间冲突 (${task.timeSlot})` };
+            }
+        }
+    }
+
+    return { valid: true };
+}
+
 // 辅助函数: 将学生均匀分配到各组
 // 增加随机性以确保每次结果不同
 const distributeStudentsToGroups = (students: Student[], numGroups: number): Student[][] => {
@@ -365,12 +440,13 @@ export const getScheduleConflicts = (
 
 export const getSuggestions = (
   students: Student[],
-  conflicts: ConflictInfo[]
+  conflicts: ConflictInfo[],
+  assignments: Record<string, string>
 ): SuggestionInfo[] => {
   const suggestions: SuggestionInfo[] = [];
   
   conflicts.forEach(conflict => {
-    if (conflict.type === 'warning') return; // 警告通常不需要自动建议替换
+    if (conflict.type === 'warning') return; 
     if (conflict.taskId === 'time-conflict') {
         suggestions.push({
             conflict,
@@ -382,7 +458,18 @@ export const getSuggestions = (
     const task = ALL_TASKS.find(t => t.id === conflict.taskId);
     if (!task) return;
     
-    const candidate = students.find(s => canAssign(s, task).valid);
+    // 查找候选人: 必须符合任务要求，且在当前组无冲突，且未过载
+    // 随机打乱学生列表以避免总是推荐同一个人
+    const shuffled = [...students].sort(() => Math.random() - 0.5);
+    
+    const candidate = shuffled.find(s => {
+        // 不能是当前冲突的学生自己
+        if (s.id === conflict.studentId) return false;
+        
+        // 使用 checkGroupAvailability 检查所有动态约束
+        const check = checkGroupAvailability(s, task, conflict.groupId, assignments);
+        return check.valid;
+    });
     
     if (candidate) {
         suggestions.push({
