@@ -55,6 +55,31 @@ const App: React.FC = () => {
     });
   };
 
+  const handleSwap = (taskId1: string, groupId1: number, taskId2: string, groupId2: number) => {
+    const key1 = `${taskId1}::${groupId1}`;
+    const key2 = `${taskId2}::${groupId2}`;
+    
+    setAssignments(prev => {
+      const next = { ...prev };
+      const val1 = next[key1];
+      const val2 = next[key2];
+
+      if (val2 === undefined) {
+        delete next[key1];
+      } else {
+        next[key1] = val2;
+      }
+
+      if (val1 === undefined) {
+        delete next[key2];
+      } else {
+        next[key2] = val1;
+      }
+      
+      return next;
+    });
+  };
+
   const handleAutoSchedule = () => {
     // Schedule N groups - Pass empty object to force fresh calculation
     const newSchedule = autoScheduleMultiGroup(students, {}, groupCount);
@@ -473,7 +498,7 @@ const App: React.FC = () => {
                 footer.style.textAlign = 'center';
                 footer.style.color = '#9ca3af';
                 footer.style.fontSize = '12px';
-                footer.innerText = 'Powered By LaoShui @ 2025 | 舟山市六横中学';
+                footer.innerText = 'Powered By LaoShui @ 2025 | 学生会检查编排系统 | 舟山市六横中学';
                 container.appendChild(footer);
             }
         }
@@ -578,6 +603,7 @@ const App: React.FC = () => {
                   students={students} 
                   assignments={assignments} 
                   onAssign={handleAssign}
+                  onSwap={handleSwap}
                   groupCount={groupCount}
                 />
             </div>
@@ -585,7 +611,7 @@ const App: React.FC = () => {
       </div>
 
       <footer className="bg-white border-t py-2 px-6 text-center text-xs text-gray-400 shrink-0">
-        Powered By LaoShui @ 2025 | 舟山市六横中学
+        Powered By LaoShui @ 2025 | 学生会检查编排系统 | 舟山市六横中学
       </footer>
 
       {toast && (
