@@ -180,6 +180,196 @@ const distributeStudentsToGroups = (
     return groups;
 };
 
+// --- 模拟退火支持 ---
+
+// 简化的冲突计算，用于 SA 快速评估能量
+const calculateEnergy = (
+    assignments: Record<string, string>,
+    students: Student[],
+    numGroups: number
+): number => {
+    let energy = 0;
+    const studentMap = new Map(students.map(s => [s.id, s]));
+
+    // 1. 未分配任务惩罚 (权重 10000)
+    const totalSlots = ALL_TASKS.length * numGroups;
+    const assignedCount = Object.keys(assignments).length;
+    energy += (totalSlots - assignedCount) * 10000;
+
+    // 预处理: Group -> Student -> Tasks
+    const groupUsage: Record<number, Record<string, TaskDefinition[]>> = {};
+    // 预处理: Student -> Groups
+    const studentGroups: Record<string, Set<number>> = {};
+
+    Object.entries(assignments).forEach(([key, sid]) => {
+        const [tid, gStr] = key.split('::');
+        const gId = parseInt(gStr);
+        const task = ALL_TASKS.find(t => t.id === tid);
+        if (!task || !studentMap.has(sid)) return;
+
+        if (!groupUsage[gId]) groupUsage[gId] = {};
+        if (!groupUsage[gId][sid]) groupUsage[gId][sid] = [];
+        groupUsage[gId][sid].push(task);
+
+        if (!studentGroups[sid]) studentGroups[sid] = new Set();
+        studentGroups[sid].add(gId);
+    });
+
+    // 2. 跨组冲突 (权重 5000)
+    Object.values(studentGroups).forEach(groups => {
+        if (groups.size > 1) energy += (groups.size - 1) * 5000;
+    });
+
+    // 3. 组内规则冲突
+    Object.values(groupUsage).forEach(groupStudents => {
+        Object.entries(groupStudents).forEach(([sid, tasks]) => {
+            // 负载检查
+            let maxLoad = 2;
+            const eyeCount = tasks.filter(t => t.category === TaskCategory.EYE_EXERCISE).length;
+            // 豁免逻辑: 如果任务数=3且含2眼操，允许
+            if (tasks.length === 3 && eyeCount >= 2) maxLoad = 3;
+
+            if (tasks.length > maxLoad) {
+                energy += (tasks.length - maxLoad) * 2000; // 过载惩罚
+            }
+
+            // 互斥检查
+            const hasCleaning = tasks.some(t => t.category === TaskCategory.CLEANING);
+            const hasEvening = tasks.some(t => t.category === TaskCategory.EVENING_STUDY);
+            if (hasCleaning && hasEvening) energy += 3000; // 严重互斥
+            
+            // 同类互斥
+            const cleanCount = tasks.filter(t => t.category === TaskCategory.CLEANING).length;
+            const eveningCount = tasks.filter(t => t.category === TaskCategory.EVENING_STUDY).length;
+            if (cleanCount > 1) energy += (cleanCount - 1) * 2000;
+            if (eveningCount > 1) energy += (eveningCount - 1) * 2000;
+
+            // 时间冲突
+            const timeSlots = new Set<string>();
+            tasks.forEach(t => {
+                if (t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内') return;
+                if (timeSlots.has(t.timeSlot)) {
+                    energy += 1500; // 时间冲突惩罚
+                }
+                timeSlots.add(t.timeSlot);
+            });
+        });
+    });
+
+    // 4. 负载方差 (权重 10) - 优化目标
+    // 仅计算已分配学生的负载方差
+    let sumSq = 0;
+    Object.values(groupUsage).forEach(g => Object.values(g).forEach(tasks => sumSq += tasks.length * tasks.length));
+    energy += sumSq * 10;
+
+    return energy;
+};
+
+// 尝试使用模拟退火优化排班
+export const optimizeWithSA = (
+    initialAssignments: Record<string, string>,
+    students: Student[],
+    numGroups: number
+): Record<string, string> => {
+    let currentAssignments = {...initialAssignments};
+    
+    // 1. 填充未分配的任务 (随机分配给符合硬性约束的人，暂时忽略软约束)
+    // 这是为了让 SA 有一个完整的解空间去优化
+    const studentMap = new Map(students.map(s => [s.id, s]));
+    
+    // 按组归类学生，方便快速查找
+    const studentsByGroup: Student[][] = Array.from({length: numGroups}, () => []);
+    // 简单地全量分配，这里我们假设学生已经通过某种方式分好组了？
+    // 不，这里我们拿到的 students 是全量的。我们需要知道哪些学生属于哪个组。
+    // 我们可以推断：如果学生在 initialAssignments 中出现过在某组，他就属于该组。
+    // 对于没出现过的学生，随机分配一个组归属。
+    
+    const studentGroupMap = new Map<string, number>();
+    Object.entries(currentAssignments).forEach(([key, sid]) => {
+        const [_, gStr] = key.split('::');
+        studentGroupMap.set(sid, parseInt(gStr));
+    });
+    
+    students.forEach(s => {
+        if (!studentGroupMap.has(s.id)) {
+            // 这是一个未被分配任务的学生，随机分配一个组归属，作为潜在替补
+            const gId = Math.floor(Math.random() * numGroups);
+            studentGroupMap.set(s.id, gId);
+        }
+        const gId = studentGroupMap.get(s.id)!;
+        if (gId >= 0 && gId < numGroups) {
+            studentsByGroup[gId].push(s);
+        }
+    });
+
+    // 填充空缺
+    ALL_TASKS.forEach(task => {
+        for (let g = 0; g < numGroups; g++) {
+            const key = `${task.id}::${g}`;
+            if (!currentAssignments[key]) {
+                // 尝试寻找一个符合硬性约束(部门/年级)的学生
+                const candidates = studentsByGroup[g].filter(s => canAssign(s, task).valid);
+                if (candidates.length > 0) {
+                    const randomStudent = candidates[Math.floor(Math.random() * candidates.length)];
+                    currentAssignments[key] = randomStudent.id;
+                }
+            }
+        }
+    });
+
+    let currentEnergy = calculateEnergy(currentAssignments, students, numGroups);
+    let bestAssignments = {...currentAssignments};
+    let bestEnergy = currentEnergy;
+
+    // SA 参数
+    let temperature = 1000;
+    const coolingRate = 0.995;
+    const minTemperature = 0.1;
+
+    while (temperature > minTemperature) {
+        // 创建邻域解
+        const newAssignments = {...currentAssignments};
+        const taskKeys = Object.keys(newAssignments);
+        if (taskKeys.length === 0) break;
+
+        // 随机选择一个任务进行变异
+        const randomKey = taskKeys[Math.floor(Math.random() * taskKeys.length)];
+        const [taskId, gStr] = randomKey.split('::');
+        const groupId = parseInt(gStr);
+        const task = ALL_TASKS.find(t => t.id === taskId);
+
+        if (task) {
+            // 变异策略: 重新分配给组内另一个符合硬性约束的学生
+            const groupStudents = studentsByGroup[groupId];
+            const candidates = groupStudents.filter(s => canAssign(s, task).valid);
+            
+            if (candidates.length > 0) {
+                const newStudent = candidates[Math.floor(Math.random() * candidates.length)];
+                newAssignments[randomKey] = newStudent.id;
+                
+                // 计算新能量
+                const newEnergy = calculateEnergy(newAssignments, students, numGroups);
+                const delta = newEnergy - currentEnergy;
+
+                // 接受准则
+                if (delta < 0 || Math.random() < Math.exp(-delta / temperature)) {
+                    currentAssignments = newAssignments;
+                    currentEnergy = newEnergy;
+
+                    if (currentEnergy < bestEnergy) {
+                        bestEnergy = currentEnergy;
+                        bestAssignments = {...currentAssignments};
+                    }
+                }
+            }
+        }
+
+        temperature *= coolingRate;
+    }
+
+    return bestAssignments;
+};
+
 export const autoScheduleMultiGroup = (
     students: Student[],
     currentAssignments: Record<string, string>, // 键格式: taskId::groupId
