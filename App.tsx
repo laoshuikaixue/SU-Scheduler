@@ -1011,7 +1011,7 @@ const App: React.FC = () => {
                 onApplySwap={handleSmartSwap}
                 onGlobalReschedule={(newAssignments) => {
                     pushHistory(newAssignments);
-                    showToast('许愿重排成功', 'success', {
+                    showToast('智能调换成功', 'success', {
                         label: '撤销',
                         onClick: () => handleUndoRef.current()
                     });

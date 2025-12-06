@@ -5,7 +5,7 @@ import { findSwapOptions, SwapProposal } from '../services/swapService';
 import Modal from './Modal';
 import { autoScheduleMultiGroupAsync } from '../services/scheduler';
 import { formatClassName } from '../utils';
-import { ArrowRight, Check, Shuffle, Wand2, AlertCircle, Loader2, Table, List, ChevronRight } from 'lucide-react';
+import { ArrowRight, Check, Shuffle, Wand2, AlertCircle, Loader2, Table, List, ChevronRight, Search, Eye, ChevronDown } from 'lucide-react';
 
 interface SwapModalProps {
     isOpen: boolean;
@@ -16,6 +16,81 @@ interface SwapModalProps {
     onApplySwap: (proposal: SwapProposal, studentId: string, originalTaskId: string, originalGroupId: number) => void;
     onGlobalReschedule: (newAssignments: Record<string, string>) => void;
 }
+
+interface SelectOption {
+    value: string | number;
+    label: string;
+}
+
+interface CustomSelectProps {
+    value: string | number;
+    onChange: (value: string) => void;
+    options: SelectOption[];
+    placeholder?: string;
+    disabled?: boolean;
+    className?: string;
+}
+
+const CustomSelect: React.FC<CustomSelectProps> = ({ value, onChange, options, placeholder, disabled, className }) => {
+    const [isOpen, setIsOpen] = useState(false);
+    const containerRef = React.useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+                setIsOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+
+    const selectedOption = options.find(opt => String(opt.value) === String(value));
+
+    return (
+        <div className={`relative ${className || ''}`} ref={containerRef}>
+            <button
+                type="button"
+                onClick={() => !disabled && setIsOpen(!isOpen)}
+                className={`w-full flex items-center justify-between border rounded-lg p-2.5 bg-white transition-all ${
+                    isOpen ? 'ring-2 ring-purple-500 border-purple-500' : 'border-gray-300 hover:border-gray-400'
+                } ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+            >
+                <span className={`text-sm truncate ${selectedOption ? 'text-gray-900' : 'text-gray-400'}`}>
+                    {selectedOption ? selectedOption.label : placeholder || '请选择...'}
+                </span>
+                <ChevronDown size={16} className={`text-gray-500 shrink-0 ml-2 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {isOpen && (
+                <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-auto custom-scrollbar animate-in fade-in zoom-in-95 duration-100 origin-top">
+                    {options.length === 0 ? (
+                        <div className="p-3 text-sm text-gray-400 text-center">无选项</div>
+                    ) : (
+                        <div className="p-1">
+                            {options.map((opt) => (
+                                <button
+                                    key={opt.value}
+                                    onClick={() => {
+                                        onChange(String(opt.value));
+                                        setIsOpen(false);
+                                    }}
+                                    className={`w-full text-left px-3 py-2 text-sm rounded-md transition-colors ${
+                                        String(opt.value) === String(value)
+                                            ? 'bg-purple-50 text-purple-700 font-medium'
+                                            : 'text-gray-700 hover:bg-gray-100'
+                                    }`}
+                                >
+                                    {opt.label}
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
 
 // 表格差异视图组件
 const ScheduleDiffTable: React.FC<{
@@ -154,6 +229,7 @@ const SwapModal: React.FC<SwapModalProps> = ({
     const [isCalculating, setIsCalculating] = useState(false);
     const [calculationStatus, setCalculationStatus] = useState<string>('');
     const [errorMessage, setErrorMessage] = useState<string>('');
+    const [studentSearch, setStudentSearch] = useState<string>(''); // 学生搜索状态
 
     // 预览状态
     const [viewMode, setViewMode] = useState<'input' | 'preview'>('input');
@@ -173,6 +249,7 @@ const SwapModal: React.FC<SwapModalProps> = ({
             setIsCalculating(false);
             setCalculationStatus('');
             setErrorMessage('');
+            setStudentSearch('');
             setViewMode('input');
             setPreviewType('list');
             setGeneratedProposals([]);
@@ -339,16 +416,28 @@ const SwapModal: React.FC<SwapModalProps> = ({
         return changes;
     };
 
-    // 可搜索的学生选择（目前简化为原生选择框）
-    // 按部门分组以便查找
-    const studentsByDept = useMemo(() => {
-        const groups: Record<string, Student[]> = {};
-        students.forEach(s => {
-            if (!groups[s.department]) groups[s.department] = [];
-            groups[s.department].push(s);
+    // 可搜索的学生选择
+    const filteredStudents = useMemo(() => {
+        let list = [...students];
+
+        // 搜索过滤
+        if (studentSearch) {
+            const lowerKey = studentSearch.toLowerCase();
+            list = list.filter(s =>
+                s.name.includes(lowerKey) ||
+                (s.pinyinInitials && s.pinyinInitials.toLowerCase().includes(lowerKey)) ||
+                (s.grade + '' === lowerKey) ||
+                (s.classNum + '' === lowerKey)
+            );
+        }
+
+        // 排序：部门 -> 年级 -> 班级
+        return list.sort((a, b) => {
+            if (a.department !== b.department) return a.department.localeCompare(b.department, 'zh-CN');
+            if (a.grade !== b.grade) return a.grade - b.grade;
+            return a.classNum - b.classNum;
         });
-        return groups;
-    }, [students]);
+    }, [students, studentSearch]);
 
     // 按类别分组任务
     const tasksByCategory = useMemo(() => {
@@ -359,6 +448,48 @@ const SwapModal: React.FC<SwapModalProps> = ({
         });
         return groups;
     }, []);
+
+    // 过滤任务列表（基于学生部门权限）
+    const getAvailableTasks = (category: string, studentId: string) => {
+        const student = students.find(s => s.id === studentId);
+        if (!student) return [];
+        
+        const tasks = tasksByCategory[category] || [];
+        return tasks.filter(t => t.allowedDepartments.includes(student.department));
+    };
+
+    // 快速调换预览处理
+    const handleQuickSwapPreview = (proposal: SwapProposal) => {
+        // 1. 复制当前分配
+        const newAssignments = { ...scheduleState.assignments };
+        const targetKey = `${proposal.targetTaskId}::${proposal.targetGroupId}`;
+        
+        // 2. 如果是移动，移除原任务（如果有）
+        if (selectedTaskKey) {
+            const [currentTaskId, currentGroupIdStr] = selectedTaskKey.split('::');
+            const currentGroupId = parseInt(currentGroupIdStr);
+            const currentKey = `${currentTaskId}::${currentGroupId}`;
+            
+            if (newAssignments[currentKey] === selectedStudentId) {
+                delete newAssignments[currentKey];
+            }
+
+            // 3. 如果是直接交换，还需要处理对方
+            if (proposal.type === 'DIRECT_SWAP' && proposal.targetStudentId) {
+                 // 将对方分配到我的原任务
+                 newAssignments[currentKey] = proposal.targetStudentId;
+            }
+        }
+
+        // 4. 将我分配到新任务
+        newAssignments[targetKey] = selectedStudentId;
+
+        // 5. 设置预览状态
+        setGeneratedProposals([newAssignments]);
+        setCurrentProposalIndex(0);
+        setViewMode('preview');
+        setPreviewType('table');
+    };
 
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="智能调换建议" width="w-[1000px]">
@@ -386,32 +517,65 @@ const SwapModal: React.FC<SwapModalProps> = ({
                             }`}
                         >
                             <Wand2 size={16} />
-                            许愿重排
+                            智能调换
                         </button>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto pr-2 space-y-6">
+                    <div className="flex-1 overflow-y-auto p-1 pr-2 space-y-6">
                         <div>
                             <label className="block text-sm font-semibold text-gray-700 mb-2">选择学生</label>
-                            <select
-                                className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow"
-                                value={selectedStudentId}
-                                onChange={(e) => {
-                                    setSelectedStudentId(e.target.value);
-                                    setSelectedTaskKey('');
-                                }}
-                            >
-                                <option value="">请选择...</option>
-                                {Object.entries(studentsByDept).map(([dept, list]) => (
-                                    <optgroup key={dept} label={dept}>
-                                        {list.map(s => (
-                                            <option key={s.id} value={s.id}>
-                                                {formatClassName(s.grade, s.classNum)} - {s.name}
-                                            </option>
-                                        ))}
-                                    </optgroup>
-                                ))}
-                            </select>
+                            <div className="space-y-2">
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
+                                    <input
+                                        type="text"
+                                        placeholder="搜索姓名、拼音首字母、年级或班级..."
+                                        className="w-full pl-9 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm transition-shadow"
+                                        value={studentSearch}
+                                        onChange={(e) => setStudentSearch(e.target.value)}
+                                    />
+                                </div>
+                                <div className="max-h-[180px] overflow-y-auto border border-gray-300 rounded-lg bg-white custom-scrollbar shadow-sm">
+                                    {filteredStudents.length === 0 ? (
+                                        <div className="p-8 text-center text-gray-400 text-sm flex flex-col items-center gap-2">
+                                            <Search size={24} className="opacity-20" />
+                                            <span>未找到匹配的学生</span>
+                                        </div>
+                                    ) : (
+                                        <div className="divide-y divide-gray-50">
+                                            {filteredStudents.map((s, index) => {
+                                                const showHeader = index === 0 || s.department !== filteredStudents[index - 1].department;
+                                                return (
+                                                    <React.Fragment key={s.id}>
+                                                        {showHeader && (
+                                                            <div className="sticky top-0 z-10 px-4 py-1.5 bg-gray-100 text-xs font-bold text-gray-500 border-y border-gray-200">
+                                                                {s.department}
+                                                            </div>
+                                                        )}
+                                                        <button
+                                                            onClick={() => {
+                                                                setSelectedStudentId(s.id);
+                                                                setSelectedTaskKey('');
+                                                            }}
+                                                            className={`w-full px-4 py-2.5 text-left text-sm transition-all hover:bg-gray-50 flex items-center justify-between group ${
+                                                                selectedStudentId === s.id 
+                                                                    ? 'bg-blue-50/80 text-blue-700 font-medium' 
+                                                                    : 'text-gray-700'
+                                                            }`}
+                                                        >
+                                                            <span className="flex items-center gap-2">
+                                                                <span className={`w-1.5 h-1.5 rounded-full ${selectedStudentId === s.id ? 'bg-blue-500' : 'bg-gray-300 group-hover:bg-gray-400'}`}></span>
+                                                                {formatClassName(s.grade, s.classNum)} <span className="text-gray-300 mx-1">|</span> {s.name}
+                                                            </span>
+                                                            {selectedStudentId === s.id && <Check size={16} className="text-blue-600 animate-in zoom-in duration-200" />}
+                                                        </button>
+                                                    </React.Fragment>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
                         </div>
 
                         {mode === 'swap' && (
@@ -487,12 +651,21 @@ const SwapModal: React.FC<SwapModalProps> = ({
                                                                 {opt.description}
                                                             </div>
                                                         </div>
-                                                        <button
-                                                            onClick={() => handleApply(opt)}
-                                                            className="flex items-center gap-1 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-black transition-colors shadow-sm opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 duration-200"
-                                                        >
-                                                            应用 <ArrowRight size={14} />
-                                                        </button>
+                                                        <div className="flex gap-2 opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 duration-200">
+                                                            <button
+                                                                onClick={() => handleQuickSwapPreview(opt)}
+                                                                className="flex items-center gap-1.5 px-3 py-2 bg-white border border-gray-200 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
+                                                                title="预览变更效果"
+                                                            >
+                                                                <Eye size={14} className="text-gray-500" /> 预览
+                                                            </button>
+                                                            <button
+                                                                onClick={() => handleApply(opt)}
+                                                                className="flex items-center gap-1 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-black transition-colors shadow-sm"
+                                                            >
+                                                                应用 <ArrowRight size={14} />
+                                                            </button>
+                                                        </div>
                                                     </div>
                                                 ))
                                             )}
@@ -507,7 +680,7 @@ const SwapModal: React.FC<SwapModalProps> = ({
                                 <div className="bg-gradient-to-r from-purple-50 to-white p-4 rounded-xl border border-purple-100 text-sm text-purple-800 flex items-start gap-3">
                                     <Wand2 className="shrink-0 mt-0.5 text-purple-500" size={18} />
                                     <div>
-                                        <strong className="font-semibold block mb-1">许愿重排功能说明</strong>
+                                        <strong className="font-semibold block mb-1">智能调换功能说明</strong>
                                         <p className="opacity-90 leading-relaxed">
                                             此功能会强制将所选任务分配给该学生，并尝试智能重新编排其他所有人的任务以解决冲突。
                                             系统会生成多个方案供您选择。注意：这可能会导致其他人员的安排发生变动。
@@ -516,51 +689,49 @@ const SwapModal: React.FC<SwapModalProps> = ({
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-4">
-                                    <div>
+                                    <div className="z-30">
                                         <label className="block text-sm font-semibold text-gray-700 mb-2">目标组别</label>
-                                        <select
-                                            className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
+                                        <CustomSelect
                                             value={wishGroupId}
-                                            onChange={(e) => setWishGroupId(parseInt(e.target.value))}
-                                        >
-                                            {Array.from({ length: numGroups }).map((_, idx) => (
-                                                <option key={idx} value={idx}>第 {idx + 1} 组</option>
-                                            ))}
-                                        </select>
+                                            onChange={(val) => setWishGroupId(parseInt(val))}
+                                            options={Array.from({ length: numGroups }).map((_, idx) => ({
+                                                value: idx,
+                                                label: `第 ${idx + 1} 组`
+                                            }))}
+                                        />
                                     </div>
-                                    <div>
+                                    <div className="z-30">
                                         <label className="block text-sm font-semibold text-gray-700 mb-2">任务类型</label>
-                                        <select
-                                            className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
+                                        <CustomSelect
                                             value={wishCategory}
-                                            onChange={(e) => {
-                                                setWishCategory(e.target.value);
+                                            onChange={(val) => {
+                                                setWishCategory(val);
                                                 setWishTaskId('');
                                             }}
-                                        >
-                                            <option value="">请选择类型...</option>
-                                            {Object.keys(tasksByCategory).map(cat => (
-                                                <option key={cat} value={cat}>{cat}</option>
-                                            ))}
-                                        </select>
+                                            placeholder="请选择类型..."
+                                            options={Object.keys(tasksByCategory)
+                                                .filter(cat => getAvailableTasks(cat, selectedStudentId).length > 0)
+                                                .map(cat => ({
+                                                    value: cat,
+                                                    label: cat
+                                                }))
+                                            }
+                                        />
                                     </div>
                                 </div>
 
                                 {wishCategory && (
-                                    <div className="animate-in fade-in">
+                                    <div className="animate-in fade-in z-20">
                                         <label className="block text-sm font-semibold text-gray-700 mb-2">具体任务</label>
-                                        <select
-                                            className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
+                                        <CustomSelect
                                             value={wishTaskId}
-                                            onChange={(e) => setWishTaskId(e.target.value)}
-                                        >
-                                            <option value="">请选择任务...</option>
-                                            {tasksByCategory[wishCategory].map(t => (
-                                                <option key={t.id} value={t.id}>
-                                                    {t.subCategory} - {t.name}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            onChange={(val) => setWishTaskId(val)}
+                                            placeholder="请选择任务..."
+                                            options={getAvailableTasks(wishCategory, selectedStudentId).map(t => ({
+                                                value: t.id,
+                                                label: `${t.subCategory} - ${t.name}`
+                                            }))}
+                                        />
                                     </div>
                                 )}
 
