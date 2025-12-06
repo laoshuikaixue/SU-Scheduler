@@ -110,18 +110,45 @@ const distributeStudentsToGroups = (students: Student[], numGroups: number): Stu
   // 先打乱学生顺序
   const shuffledStudents = [...students].sort(() => Math.random() - 0.5);
   
-  // 按部门分组，确保部门分布均匀
-  const deptMap: Record<string, Student[]> = {};
+  // 分离特殊部门和常规部门
+  const specialStudents: Student[] = [];
+  const regularStudents: Student[] = [];
+
   shuffledStudents.forEach(s => {
-    if (!deptMap[s.department]) deptMap[s.department] = [];
-    deptMap[s.department].push(s);
+      if (SPECIAL_DEPARTMENTS.includes(s.department)) {
+          specialStudents.push(s);
+      } else {
+          regularStudents.push(s);
+      }
+  });
+
+  // 1. 特殊部门 (SPECIAL_DEPARTMENTS) 分配
+  // 特殊部门只负责室内课间操，无年级限制，所以直接均匀分配即可
+  // 必须保证每组分到足够数量的特殊部门成员 (室内课间操有5个岗位)
+  specialStudents.forEach((s, idx) => {
+      groups[idx % numGroups].push(s);
+  });
+
+  // 2. 常规部门 (REGULAR_DEPARTMENTS) 分配
+  // 常规部门负责晚自习等，有严格的年级避嫌要求，必须按 年级+部门 细分
+  const bucketMap: Record<string, Student[]> = {};
+  regularStudents.forEach(s => {
+    const key = `${s.department}-${s.grade}`;
+    if (!bucketMap[key]) bucketMap[key] = [];
+    bucketMap[key].push(s);
   });
   
-  // 轮询分配各部门成员到组
-  Object.values(deptMap).forEach(deptStudents => {
-      deptStudents.forEach((s, idx) => {
-          groups[idx % numGroups].push(s);
+  // 轮询分配各 Bucket 成员到组
+  // 为了避免所有 Bucket 都从 Group 0 开始填充导致前几组人数偏多
+  // 我们使用一个全局计数器或者随机起始偏移
+  let groupOffset = Math.floor(Math.random() * numGroups);
+
+  Object.values(bucketMap).forEach(bucketStudents => {
+      bucketStudents.forEach((s, idx) => {
+          groups[(idx + groupOffset) % numGroups].push(s);
       });
+      // 每个 bucket 分配完后，偏移量移动，确保下一批人从不同的组开始塞
+      groupOffset = (groupOffset + 1) % numGroups;
   });
   
   return groups;
@@ -132,148 +159,182 @@ export const autoScheduleMultiGroup = (
   currentAssignments: Record<string, string>, // 键格式: taskId::groupId
   numGroups: number
 ): Record<string, string> => {
-  // 复制当前分配（通常为空，因为是重新编排）
-  const newAssignments = { ...currentAssignments };
-  
-  // 将学生分配到不重叠的组池中
-  const studentsPerGroup = distributeStudentsToGroups(students, numGroups);
+  let bestAssignments: Record<string, string> = {};
+  let maxFilledCount = -1;
+  const totalSlots = ALL_TASKS.length * numGroups;
+  const MAX_RETRIES = 20; // 增加重试次数以应对复杂的约束组合
 
-  // 任务排序策略
-  const sortedTasks = [...ALL_TASKS].sort((a, b) => {
-    // 优先级 1: 部门限制 (越难分配的越先排)
-    const deptDiff = a.allowedDepartments.length - b.allowedDepartments.length;
-    if (deptDiff !== 0) return deptDiff;
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      // 复制当前分配（通常为空，因为是重新编排）
+      const newAssignments = { ...currentAssignments };
+      
+      // 将学生分配到不重叠的组池中
+      const studentsPerGroup = distributeStudentsToGroups(students, numGroups);
 
-    // 优先级 2: 硬性约束 (晚自习有年级限制)
-    if (a.forbiddenGrade && !b.forbiddenGrade) return -1;
-    if (!a.forbiddenGrade && b.forbiddenGrade) return 1;
+      // 任务排序策略
+      const sortedTasks = [...ALL_TASKS].sort((a, b) => {
+        // 优先级 1: 部门限制 (越难分配的越先排)
+        const deptDiff = a.allowedDepartments.length - b.allowedDepartments.length;
+        if (deptDiff !== 0) return deptDiff;
 
-    return 0;
-  });
+        // 优先级 2: 硬性约束 (晚自习有年级限制)
+        if (a.forbiddenGrade && !b.forbiddenGrade) return -1;
+        if (!a.forbiddenGrade && b.forbiddenGrade) return 1;
 
-  // 逐组进行编排
-  for (let g = 0; g < numGroups; g++) {
-    const groupWorkload: Record<string, number> = {}; // 记录每个人在当前组的任务数
-    const studentCategories: Record<string, Set<TaskCategory>> = {}; // 记录已分配的任务类别
-    const studentTimeSlots: Record<string, Set<TimeSlot>> = {}; // 记录已占用的时间段
-    
-    // 仅使用分配给该组的学生池
-    const groupStudents = studentsPerGroup[g];
+        return 0;
+      });
 
-    // 初始化追踪器
-    groupStudents.forEach(s => {
-        groupWorkload[s.id] = 0;
-        studentCategories[s.id] = new Set();
-        studentTimeSlots[s.id] = new Set();
-    });
-    
-    // 扫描当前手动锁定的分配，更新负载状态
-    ALL_TASKS.forEach(task => {
-        const key = `${task.id}::${g}`;
-        const sid = newAssignments[key];
-        if (sid) {
-            if (groupWorkload[sid] !== undefined) {
-                groupWorkload[sid] = (groupWorkload[sid] || 0) + 1;
-                studentCategories[sid].add(task.category);
-                studentTimeSlots[sid].add(task.timeSlot);
+      // 逐组进行编排
+      for (let g = 0; g < numGroups; g++) {
+        const groupWorkload: Record<string, number> = {}; // 记录每个人在当前组的任务数
+        const studentCategories: Record<string, Set<TaskCategory>> = {}; // 记录已分配的任务类别
+        const studentTimeSlots: Record<string, Set<TimeSlot>> = {}; // 记录已占用的时间段
+        
+        // 仅使用分配给该组的学生池
+        const groupStudents = studentsPerGroup[g];
+
+        // 初始化追踪器
+        groupStudents.forEach(s => {
+            groupWorkload[s.id] = 0;
+            studentCategories[s.id] = new Set();
+            studentTimeSlots[s.id] = new Set();
+        });
+        
+        // 扫描当前手动锁定的分配，更新负载状态
+        ALL_TASKS.forEach(task => {
+            const key = `${task.id}::${g}`;
+            const sid = newAssignments[key];
+            if (sid) {
+                if (groupWorkload[sid] !== undefined) {
+                    groupWorkload[sid] = (groupWorkload[sid] || 0) + 1;
+                    studentCategories[sid].add(task.category);
+                    studentTimeSlots[sid].add(task.timeSlot);
+                }
             }
-        }
-    });
-
-    for (const task of sortedTasks) {
-        const key = `${task.id}::${g}`;
-        // 如果已分配则跳过
-        if (newAssignments[key]) continue;
-
-        // 在组内池中寻找候选人
-        // 第一轮筛选: 尝试找到符合 "每组最大任务数 <= 2" 且 "大项目只排一个" 的候选人
-        // 同时优先保证 "一人一岗" (负载尽量低)
-        let candidates = groupStudents.filter(student => {
-            // 规则 1: 组内互斥 (由 groupStudents 保证)
-            
-            // 规则 2: 负载限制 (基础限制 2)
-            // 注意: 如果人员不足，后续会放宽此限制，但此处先严格限制
-            if (groupWorkload[student.id] >= 2) return false;
-
-            // 规则 3: 时间段冲突
-            // 特殊: 室内课间操不检查时间冲突
-            const isIndoorInterval = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
-            if (!isIndoorInterval && studentTimeSlots[student.id].has(task.timeSlot)) return false;
-
-            // 规则 4: 任务特定约束 (部门、避嫌)
-            if (!canAssign(student, task).valid) return false;
-
-            // 规则 5: 互斥逻辑 (大项目互斥)
-            const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
-            const hasEvening = studentCategories[student.id].has(TaskCategory.EVENING_STUDY);
-
-            // 包干区 和 晚自习 绝对互斥
-            if (task.category === TaskCategory.EVENING_STUDY && hasCleaning) return false;
-            if (task.category === TaskCategory.CLEANING && hasEvening) return false;
-            
-            // 相同大项目互斥 (一人只能一个包干区，一人只能一个晚自习)
-            if (task.category === TaskCategory.CLEANING && hasCleaning) return false;
-            if (task.category === TaskCategory.EVENING_STUDY && hasEvening) return false;
-
-            return true;
         });
 
-        // 如果第一轮没找到，且当前任务是 眼操，尝试放宽负载限制
-        // "眼操上午下午可以安排部分人员都检查... 尽量一人一个"
-        if (candidates.length === 0 && task.category === TaskCategory.EYE_EXERCISE) {
-             candidates = groupStudents.filter(student => {
-                // 放宽负载限制: 允许 > 2 (例如 3: 包干 + 眼操AM + 眼操PM)
-                // 但仍需遵守互斥和时间冲突
-                
-                // 必须遵守时间冲突
-                if (studentTimeSlots[student.id].has(task.timeSlot)) return false;
+        for (const task of sortedTasks) {
+            const key = `${task.id}::${g}`;
+            // 如果已分配则跳过
+            if (newAssignments[key]) continue;
 
-                // 必须遵守任务特定约束
-                if (!canAssign(student, task).valid) return false;
+            // 在组内池中寻找候选人
+            // 第一轮筛选: 尝试找到符合 "每组最大任务数 <= 2" 且 "大项目只排一个" 的候选人
+            // 同时优先保证 "一人一岗" (负载尽量低)
+            let candidates = groupStudents.filter(student => {
+                // 规则 1: 组内互斥 (由 groupStudents 保证)
                 
+                // 规则 2: 负载限制 (基础限制 2)
+                // 注意: 如果人员不足，后续会放宽此限制，但此处先严格限制
+                if (groupWorkload[student.id] >= 2) return false;
+
+                // 规则 3: 时间段冲突
+                // 特殊: 室内课间操不检查时间冲突
+                const isIndoorInterval = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
+                if (!isIndoorInterval && studentTimeSlots[student.id].has(task.timeSlot)) return false;
+
+                // 规则 4: 任务特定约束 (部门、避嫌)
+                if (!canAssign(student, task).valid) return false;
+
+                // 规则 5: 互斥逻辑 (大项目互斥)
                 const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
                 const hasEvening = studentCategories[student.id].has(TaskCategory.EVENING_STUDY);
 
-                // 仍然保持大项目互斥
-                if (hasCleaning && hasEvening) return false; // 理论上不应发生，但防御性检查
+                // 包干区 和 晚自习 绝对互斥
+                if (task.category === TaskCategory.EVENING_STUDY && hasCleaning) return false;
+                if (task.category === TaskCategory.CLEANING && hasEvening) return false;
+                
+                // 相同大项目互斥 (一人只能一个包干区，一人只能一个晚自习)
+                if (task.category === TaskCategory.CLEANING && hasCleaning) return false;
+                if (task.category === TaskCategory.EVENING_STUDY && hasEvening) return false;
 
                 return true;
-             });
-        }
+            });
 
-        if (candidates.length === 0) continue;
+            // 如果第一轮没找到，且当前任务是 眼操，尝试放宽负载限制
+            // "眼操上午下午可以安排部分人员都检查... 尽量一人一个"
+            if (candidates.length === 0 && task.category === TaskCategory.EYE_EXERCISE) {
+                 candidates = groupStudents.filter(student => {
+                    // 放宽负载限制: 允许 > 2 (例如 3: 包干 + 眼操AM + 眼操PM)
+                    // 但仍需遵守互斥和时间冲突
+                    
+                    // 必须遵守时间冲突
+                    if (studentTimeSlots[student.id].has(task.timeSlot)) return false;
 
-        // 候选人打分排序
-        candidates.sort((a, b) => {
-            const loadA = groupWorkload[a.id];
-            const loadB = groupWorkload[b.id];
-            
-            // 优先选负载最低的
-            if (loadA !== loadB) return loadA - loadB;
+                    // 必须遵守任务特定约束
+                    if (!canAssign(student, task).valid) return false;
+                    
+                    const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
+                    const hasEvening = studentCategories[student.id].has(TaskCategory.EVENING_STUDY);
 
-            // 进阶逻辑: 组合偏好
-            // 如果当前任务是眼操，优先给已经有包干区的人 (凑成 包干+眼操)
-            if (task.category === TaskCategory.EYE_EXERCISE) {
-                const hasCleanA = studentCategories[a.id].has(TaskCategory.CLEANING);
-                const hasCleanB = studentCategories[b.id].has(TaskCategory.CLEANING);
-                if (hasCleanA && !hasCleanB) return -1;
-                if (!hasCleanA && hasCleanB) return 1;
+                    // 仍然保持大项目互斥
+                    if (hasCleaning && hasEvening) return false; // 理论上不应发生，但防御性检查
+
+                    // NEW: 严格限制 - 如果已经有晚自习，不能再加任务（晚自习通常比较重）
+                    if (hasEvening) return false;
+
+                    // NEW: 严格限制 - 如果已经有2个任务，且其中没有眼操，说明是 "包干+其他"，再加就是3个
+                    // 我们希望只有在 "包干+眼操" 的基础上再加 "眼操"
+                    // 或者 "眼操+眼操" -> "眼操+眼操+眼操" (理论上)
+                    // 防止 "包干+晚自习"(已互斥)
+                    
+                    // 检查当前负载
+                    // 如果已经 >= 3，绝对不行
+                    if (groupWorkload[student.id] >= 3) return false;
+
+                    return true;
+                 });
             }
 
-            return 0;
-        });
-        
-        const bestCandidate = candidates[0];
-        newAssignments[key] = bestCandidate.id;
-        
-        // 更新追踪器
-        groupWorkload[bestCandidate.id]++;
-        studentCategories[bestCandidate.id].add(task.category);
-        studentTimeSlots[bestCandidate.id].add(task.timeSlot);
-    }
+            if (candidates.length === 0) continue;
+
+            // 候选人打分排序
+            candidates.sort((a, b) => {
+                const loadA = groupWorkload[a.id];
+                const loadB = groupWorkload[b.id];
+                
+                // 优先选负载最低的
+                if (loadA !== loadB) return loadA - loadB;
+
+                // 进阶逻辑: 组合偏好
+                // 如果当前任务是眼操，优先给已经有包干区的人 (凑成 包干+眼操)
+                if (task.category === TaskCategory.EYE_EXERCISE) {
+                    const hasCleanA = studentCategories[a.id].has(TaskCategory.CLEANING);
+                    const hasCleanB = studentCategories[b.id].has(TaskCategory.CLEANING);
+                    if (hasCleanA && !hasCleanB) return -1;
+                    if (!hasCleanA && hasCleanB) return 1;
+                }
+
+                return 0;
+            });
+            
+            const bestCandidate = candidates[0];
+            newAssignments[key] = bestCandidate.id;
+            
+            // 更新追踪器
+            groupWorkload[bestCandidate.id]++;
+            studentCategories[bestCandidate.id].add(task.category);
+            studentTimeSlots[bestCandidate.id].add(task.timeSlot);
+        }
+      }
+
+      // 检查本次分配的完整度
+      const filledCount = Object.keys(newAssignments).length;
+      
+      // 如果找到完美解，直接返回
+      if (filledCount >= totalSlots) {
+          return newAssignments;
+      }
+
+      // 否则保留最佳解
+      if (filledCount > maxFilledCount) {
+          maxFilledCount = filledCount;
+          bestAssignments = newAssignments;
+      }
   }
 
-  return newAssignments;
+  // 返回多次尝试中的最佳结果
+  return bestAssignments;
 };
 
 export interface ConflictInfo {
