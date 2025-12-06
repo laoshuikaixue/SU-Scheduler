@@ -66,17 +66,17 @@ const StudentList: React.FC<Props> = ({students}) => {
 const getDeptColor = (dept: Department) => {
     switch (dept) {
         case Department.CHAIRMAN:
-            return '#f59e0b'; // Amber
+            return '#f59e0b'; // 琥珀色
         case Department.DISCIPLINE:
-            return '#ef4444'; // Red
+            return '#ef4444'; // 红色
         case Department.STUDY:
-            return '#3b82f6'; // Blue
+            return '#3b82f6'; // 蓝色
         case Department.ART:
-            return '#ec4899'; // Pink
+            return '#ec4899'; // 粉色
         case Department.CLUBS:
-            return '#8b5cf6'; // Purple
+            return '#8b5cf6'; // 紫色
         case Department.SPORTS:
-            return '#10b981'; // Emerald
+            return '#10b981'; // 翠绿色
         default:
             return '#94a3b8';
     }

@@ -12,7 +12,7 @@ const Toast: React.FC<ToastProps> = ({message, type = 'success', onClose, durati
     const [isVisible, setIsVisible] = useState(false);
 
     useEffect(() => {
-        // Trigger entry animation
+        // 触发进入动画
         requestAnimationFrame(() => {
             setIsVisible(true);
         });
@@ -25,7 +25,7 @@ const Toast: React.FC<ToastProps> = ({message, type = 'success', onClose, durati
 
     const handleClose = () => {
         setIsVisible(false);
-        // Wait for animation to finish before calling onClose
+        // 等待动画结束后再调用 onClose
         setTimeout(onClose, 300);
     };
 

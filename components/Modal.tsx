@@ -24,13 +24,13 @@ const Modal: React.FC<Props> = ({isOpen, onClose, title, children, footer, width
 
     return createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            {/* Backdrop */}
+            {/* 背景遮罩 */}
             <div
                 className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity duration-300"
                 onClick={onClose}
             />
 
-            {/* Content */}
+            {/* 内容区域 */}
             <div
                 className={`relative bg-white rounded-xl shadow-2xl flex flex-col max-h-[90vh] animate-in fade-in zoom-in-95 duration-200 ${width}`}
             >

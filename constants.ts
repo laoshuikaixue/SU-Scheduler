@@ -59,7 +59,7 @@ export const MOCK_STUDENTS: Student[] = generateMockStudents();
 const GRADE_CN = ['', '一', '二', '三'];
 
 export const ALL_TASKS: TaskDefinition[] = [
-    // --- 1. 包干区 (Cleaning) ---
+    // --- 1. 包干区 ---
     {
         id: 'clean-out',
         category: TaskCategory.CLEANING,
@@ -93,7 +93,7 @@ export const ALL_TASKS: TaskDefinition[] = [
         allowedDepartments: REGULAR_DEPARTMENTS,
     },
 
-    // --- 2. 课间操 (Interval Exercise) ---
+    // --- 2. 课间操 ---
     {
         id: 'ex-out-1',
         category: TaskCategory.INTERVAL_EXERCISE,
@@ -128,7 +128,7 @@ export const ALL_TASKS: TaskDefinition[] = [
         allowedDepartments: SPECIAL_DEPARTMENTS, // 仅特殊部门负责室内课间操
     })),
 
-    // --- 3. 眼保健操 (Eye Exercise) ---
+    // --- 3. 眼保健操 ---
     // 上午: 高一, 高二. 下午: 高一, 高二, 高三. 分为 1-3, 4-6 班组.
     ...[1, 2].flatMap(grade => [
         {
@@ -171,7 +171,7 @@ export const ALL_TASKS: TaskDefinition[] = [
         }
     ]),
 
-    // --- 4. 晚自习 (Evening Study) ---
+    // --- 4. 晚自习 ---
     ...[1, 2, 3].map(grade => ({
         id: `even-g${grade}`,
         category: TaskCategory.EVENING_STUDY,

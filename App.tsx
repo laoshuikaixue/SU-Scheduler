@@ -4,8 +4,15 @@ import ScheduleGrid from './components/ScheduleGrid';
 import Toast from './components/Toast';
 import {ALL_TASKS, MOCK_STUDENTS} from './constants';
 import {Department, Student, TaskCategory} from './types';
-import {autoScheduleMultiGroup, ConflictInfo, getScheduleConflicts, getSuggestions} from './services/scheduler';
+import {
+    autoScheduleMultiGroupAsync,
+    CalculationStats,
+    ConflictInfo,
+    getScheduleConflicts,
+    getSuggestions
+} from './services/scheduler';
 import {formatClassName} from './utils';
+import CalculationLog from './components/CalculationLog';
 import {
     Download,
     FileJson,
@@ -30,19 +37,22 @@ import {SuggestionsPanel} from './components/SuggestionsPanel';
 
 const App: React.FC = () => {
     const [students, setStudents] = useState<Student[]>([]);
-    // Assignments key is `${taskId}::${groupIndex}`
+    // 任务分配 key 格式为 `${taskId}::${groupIndex}`
     const [assignments, setAssignments] = useState<Record<string, string>>({});
-    // History for Undo/Redo
+    // 撤销/重做历史记录
     const [history, setHistory] = useState<Record<string, string>[]>([{}]);
     const [historyIndex, setHistoryIndex] = useState(0);
 
     const [groupCount, setGroupCount] = useState(3);
     const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+    const [logs, setLogs] = useState<string[]>([]);
+    const [stats, setStats] = useState<CalculationStats | undefined>(undefined);
+    const [isCalculating, setIsCalculating] = useState(false);
 
     const conflicts = getScheduleConflicts(students, assignments, groupCount);
     const suggestions = getSuggestions(students, conflicts, assignments);
 
-    // Export Dialog State
+    // 导出对话框状态
     const [exportDialog, setExportDialog] = useState<{
         isOpen: boolean,
         type: 'excel' | 'image' | null
@@ -62,7 +72,7 @@ const App: React.FC = () => {
         setToast({message, type});
     };
 
-    // Helper to push new state to history
+    // 辅助函数：将新状态推入历史记录
     const pushHistory = (newAssignments: Record<string, string>) => {
         const newHistory = history.slice(0, historyIndex + 1);
         newHistory.push(newAssignments);
@@ -101,8 +111,8 @@ const App: React.FC = () => {
                     setStudents(data.students);
                 }
                 if (data.assignments) {
-                    // Importing assignments resets history or adds to it?
-                    // Let's treat import as a new action
+                    // 导入分配是重置历史还是添加到历史？
+                    // 我们将导入视为一个新的操作
                     pushHistory(data.assignments);
                 }
                 if (data.groupCount) {
@@ -114,7 +124,7 @@ const App: React.FC = () => {
                 showToast('导入失败：文件格式错误', 'error');
                 console.error(err);
             }
-            // Reset input
+            // 重置输入
             if (jsonInputRef.current) jsonInputRef.current.value = '';
         };
         reader.readAsText(file);
@@ -129,7 +139,7 @@ const App: React.FC = () => {
         showToast('数据已清空');
     };
 
-    // Init mock data with pinyin
+    // 初始化带拼音的模拟数据
     useEffect(() => {
         const enriched = MOCK_STUDENTS.map(s => ({
             ...s,
@@ -172,22 +182,60 @@ const App: React.FC = () => {
         pushHistory(next);
     };
 
-    const handleAutoSchedule = () => {
-        // Schedule N groups - Pass empty object to force fresh calculation
-        const newSchedule = autoScheduleMultiGroup(students, {}, groupCount);
-        pushHistory(newSchedule);
-        showToast(`${groupCount}组自动编排完成！`);
+    const handleAutoSchedule = async () => {
+        setIsCalculating(true);
+        setLogs(['>>> 初始化计算引擎...', '>>> 加载学生数据...', '>>> 加载任务约束...']);
+        setStats(undefined);
+
+        try {
+            // 编排 N 组 - 传入空对象以强制重新计算
+            const newSchedule = await autoScheduleMultiGroupAsync(
+                students,
+                {},
+                groupCount,
+                (log, newStats) => {
+                    setLogs(prev => [...prev, log]);
+                    if (newStats) setStats(newStats);
+                }
+            );
+            pushHistory(newSchedule);
+            showToast(`${groupCount}组自动编排完成！`);
+        } catch (error) {
+            console.error(error);
+            showToast('编排失败', 'error');
+        } finally {
+            setTimeout(() => setIsCalculating(false), 3000);
+        }
     };
 
-    const handleAutoComplete = () => {
-        // Pass current assignments to fill empty slots
-        const newSchedule = autoScheduleMultiGroup(students, assignments, groupCount);
-        pushHistory(newSchedule);
-        showToast(`${groupCount}组自动补全完成！`);
+    const handleAutoComplete = async () => {
+        setIsCalculating(true);
+        setLogs(['>>> 初始化补全模式...', '>>> 锁定已有任务...', '>>> 扫描剩余空位...']);
+        setStats(undefined);
+
+        try {
+            // 传入当前分配以填充空位
+            const newSchedule = await autoScheduleMultiGroupAsync(
+                students,
+                assignments,
+                groupCount,
+                (log, newStats) => {
+                    setLogs(prev => [...prev, log]);
+                    if (newStats) setStats(newStats);
+                }
+            );
+            pushHistory(newSchedule);
+            showToast(`${groupCount}组自动补全完成！`);
+        } catch (error) {
+            console.error(error);
+            showToast('补全失败', 'error');
+        } finally {
+            setTimeout(() => setIsCalculating(false), 3000);
+        }
     };
 
     const handleApplySuggestion = (conflict: ConflictInfo, suggestedStudentId: string) => {
-        // handleAssign calls pushHistory, so we can reuse it
+        // handleAssign 调用了 pushHistory，所以我们可以重用它
         handleAssign(conflict.taskId, conflict.groupId, suggestedStudentId);
         showToast('已应用建议修改');
     };
@@ -217,7 +265,7 @@ const App: React.FC = () => {
                     grade = parseInt(classStr[0]) || 1;
                     classNum = parseInt(classStr.substring(1)) || 1;
                 } else {
-                    // Try parsing chinese like "高二(1)"
+                    // 尝试解析中文如 "高二(1)"
                     if (classStr.includes('高一') || classStr.includes('一')) grade = 1;
                     if (classStr.includes('高二') || classStr.includes('二')) grade = 2;
                     if (classStr.includes('高三') || classStr.includes('三')) grade = 3;
@@ -226,7 +274,7 @@ const App: React.FC = () => {
                 }
 
                 const name = row['姓名'] || `Student ${idx}`;
-                // Auto generate pinyin
+                // 自动生成拼音
                 const py = pinyin(name, {pattern: 'first', toneType: 'none', type: 'array'}).join('');
 
                 return {
@@ -259,7 +307,7 @@ const App: React.FC = () => {
     const getPersonalTasksData = () => {
         const studentTasks: Record<string, string[]> = {};
 
-        // Group assignments by student
+        // 按学生分组分配
         Object.entries(assignments).forEach(([key, studentId]) => {
             const [taskId, groupIdxStr] = key.split('::');
             const groupIdx = parseInt(groupIdxStr);
@@ -269,24 +317,24 @@ const App: React.FC = () => {
 
             if (!studentTasks[studentId]) studentTasks[studentId] = [];
 
-            // Format Task Name
+            // 格式化任务名称
             let catName = task.category;
             if (catName === TaskCategory.EYE_EXERCISE) catName = '眼操';
-            // Remove '点位' from name if present to match user preference "室外1" vs "室外点位1"
-            // Also normalize parentheses to full-width
+            // 如果名称中包含 '点位' 则移除，以符合用户偏好 "室外1" vs "室外点位1"
+            // 同时将括号标准化为全角
             const cleanName = task.name.replace('点位', '').replace(/\(/g, '（').replace(/\)/g, '）');
 
-            // Avoid duplication like "晚自习晚自习"
+            // 避免重复，例如 "晚自习晚自习"
             const sub = task.subCategory === task.category ? '' : task.subCategory;
 
             const taskName = `${catName}${sub}${cleanName}`;
 
-            // Append group info only if multiple groups exist
+            // 仅当存在多个组时附加组信息
             const groupSuffix = groupCount > 1 ? `(第${groupIdx + 1}组)` : '';
             studentTasks[studentId].push(`${taskName}${groupSuffix}`);
         });
 
-        // Sort students
+        // 学生排序
         const sortedStudents = [...students].sort((a, b) => {
             if (a.grade !== b.grade) return a.grade - b.grade;
             if (a.classNum !== b.classNum) return a.classNum - b.classNum;
@@ -313,7 +361,7 @@ const App: React.FC = () => {
                 currentClass = className;
             }
 
-            // Sort tasks to ensure consistent order
+            // 对任务进行排序以确保顺序一致
             tasks.sort();
 
             content += `${student.name}： ${tasks.join('；')}\n`;
@@ -324,15 +372,15 @@ const App: React.FC = () => {
     };
 
     const performExportExcel = () => {
-        // 1. Summary Sheet Data
+        // 1. 汇总表数据
         const summaryRows: any[] = [];
-        // Header Row
+        // 标题行
         const headerRow = ['项目', '细项', '检查内容'];
         for (let i = 0; i < groupCount; i++) headerRow.push(`第${i + 1}组`);
         summaryRows.push(headerRow);
 
-        // To handle merging, we need to process tasks in order and track spans
-        // Group tasks exactly as in ScheduleGrid to ensure consistent order
+        // 为了处理合并，我们需要按顺序处理任务并跟踪跨度
+        // 严格按照 ScheduleGrid 中的分组对任务进行分组，以确保顺序一致
         const tasksByCategory = {
             [TaskCategory.CLEANING]: ALL_TASKS.filter(t => t.category === TaskCategory.CLEANING),
             [TaskCategory.INTERVAL_EXERCISE]: ALL_TASKS.filter(t => t.category === TaskCategory.INTERVAL_EXERCISE),
@@ -341,14 +389,14 @@ const App: React.FC = () => {
         };
 
         const merges: any[] = [];
-        let currentRow = 1; // Start after header
+        let currentRow = 1; // 从标题后开始
 
         Object.entries(tasksByCategory).forEach(([category, tasks]) => {
             if (tasks.length === 0) return;
 
             const catStartRow = currentRow;
 
-            // Group by SubCategory within Category
+            // 在类别内按子类别分组
             const tasksBySub: Record<string, typeof tasks> = {};
             tasks.forEach(t => {
                 if (!tasksBySub[t.subCategory]) tasksBySub[t.subCategory] = [];
@@ -365,7 +413,7 @@ const App: React.FC = () => {
                         task.name,
                     ];
 
-                    // Loop through current group count
+                    // 遍历当前组数
                     for (let g = 0; g < groupCount; g++) {
                         const sid = assignments[`${task.id}::${g}`];
                         const student = students.find(s => s.id === sid);
@@ -375,7 +423,7 @@ const App: React.FC = () => {
                     currentRow++;
                 });
 
-                // Merge SubCategory Column (Col Index 1)
+                // 合并子类别列 (列索引 1)
                 if (subTasks.length > 1) {
                     merges.push({
                         s: {r: subStartRow, c: 1},
@@ -420,7 +468,7 @@ const App: React.FC = () => {
                 }
             });
 
-            // Merge Category Column (Col Index 0)
+            // 合并类别列 (列索引 0)
             if (tasks.length > 1) {
                 merges.push({
                     s: {r: catStartRow, c: 0},
@@ -432,27 +480,27 @@ const App: React.FC = () => {
         const wb = XLSX.utils.book_new();
         const ws1 = XLSX.utils.aoa_to_sheet(summaryRows);
 
-        // Apply merges
+        // 应用合并
         ws1['!merges'] = merges;
 
-        // Style Summary Sheet
-        // Set column widths
+        // 样式化汇总表
+        // 设置列宽
         const wscols = [
-            {wch: 12}, // Category
-            {wch: 10}, // Sub
-            {wch: 15}, // Name
+            {wch: 12}, // 类别
+            {wch: 10}, // 子类别
+            {wch: 15}, // 名称
         ];
         for (let i = 0; i < groupCount; i++) wscols.push({wch: 20});
         ws1['!cols'] = wscols;
 
-        // Apply styles to all cells in range
+        // 应用样式到范围内的所有单元格
         const range = XLSX.utils.decode_range(ws1['!ref'] || 'A1:A1');
         for (let R = range.s.r; R <= range.e.r; ++R) {
             for (let C = range.s.c; C <= range.e.c; ++C) {
                 const cell_address = XLSX.utils.encode_cell({r: R, c: C});
                 if (!ws1[cell_address]) continue;
 
-                // Basic border
+                // 基础边框
                 ws1[cell_address].s = {
                     border: {
                         top: {style: "thin", color: {rgb: "000000"}},
@@ -467,7 +515,7 @@ const App: React.FC = () => {
                     }
                 };
 
-                // Header style
+                // 标题行样式
                 if (R === 0) {
                     ws1[cell_address].s.fill = {fgColor: {rgb: "EFEFEF"}};
                     ws1[cell_address].s.font = {bold: true};
@@ -477,8 +525,8 @@ const App: React.FC = () => {
 
         XLSX.utils.book_append_sheet(wb, ws1, "总表");
 
-        // 2. Person Details Sheet (Grouped by Grade -> Class -> Name)
-        // Collect all assignments
+        // 2. 人员明细表 (按 年级 -> 班级 -> 姓名 分组)
+        // 收集所有分配
         const studentTasks: Record<string, string[]> = {};
 
         Object.keys(assignments).forEach(key => {
@@ -492,20 +540,20 @@ const App: React.FC = () => {
 
             if (student && task) {
                 if (!studentTasks[sid]) studentTasks[sid] = [];
-                // Format: Task Name
-                // Use user requested format for task details if possible or just clean description
+                // 格式: 任务名称
+                // 如果可能，使用用户要求的格式，或者直接使用清晰的描述
                 studentTasks[sid].push(`${task.category} ${task.subCategory} ${task.name}`);
             }
         });
 
-        // Convert to list and sort
+        // 转换为列表并排序
         const detailsList: { grade: number, classNum: number, str: string }[] = [];
         Object.keys(studentTasks).forEach(sid => {
             const student = students.find(s => s.id === sid);
             if (student) {
-                const tasksStr = studentTasks[sid].join('、'); // Use Chinese comma
+                const tasksStr = studentTasks[sid].join('、'); // 使用中文顿号
                 const gradeMap = ['', '高一', '高二', '高三'];
-                // Format: 高二 - 二（1）班 - 张三：室外包干区迟到1号
+                // 格式: 高二 - 二（1）班 - 张三：室外包干区迟到1号
                 const gradeStr = gradeMap[student.grade] || `${student.grade}`;
                 const customClassStr = `${gradeMap[student.grade]}（${student.classNum}）班`;
 
@@ -524,13 +572,13 @@ const App: React.FC = () => {
             return a.classNum - b.classNum;
         });
 
-        // Create sheet with single column
+        // 创建单列的工作表
         const ws2Data = detailsList.map(item => [item.str]);
         const ws2 = XLSX.utils.aoa_to_sheet(ws2Data);
-        ws2['!cols'] = [{wch: 100}]; // Wide column
+        ws2['!cols'] = [{wch: 100}]; // 宽列
         XLSX.utils.book_append_sheet(wb, ws2, "人员明细");
 
-        // 3. Personal Task List Sheet (Optional)
+        // 3. 个人任务清单表 (可选)
         if (includePersonalList) {
             const {studentTasks, sortedStudents} = getPersonalTasksData();
             const sheetRows: any[][] = [['个人任务清单']];
@@ -542,7 +590,7 @@ const App: React.FC = () => {
 
                 const className = formatClassName(student.grade, student.classNum);
                 if (className !== currentClass) {
-                    sheetRows.push(['']); // Empty row
+                    sheetRows.push(['']); // 空行
                     sheetRows.push([className]);
                     currentClass = className;
                 }
@@ -565,19 +613,19 @@ const App: React.FC = () => {
             const canvas = await html2canvas(element, {
                 scale: imageScale,
                 onclone: (clonedDoc) => {
-                    // 1. Hide the description text
+                    // 1. 隐藏描述文本
                     const desc = clonedDoc.getElementById('schedule-description');
                     if (desc) desc.style.display = 'none';
 
-                    // 2. Add Personal List & Footer
+                    // 2. 添加个人清单和页脚
                     const container = clonedDoc.getElementById('schedule-export-area');
                     if (container) {
-                        // Apply Width Settings
+                        // 应用宽度设置
                         if (targetWidth === 'a4' || targetWidth === 'a4_landscape') {
                             const width = targetWidth === 'a4' ? '794px' : '1123px';
                             container.style.width = width;
                             container.style.minWidth = 'unset';
-                            // Find table and adjust
+                            // 查找并调整表格
                             const table = container.querySelector('table');
                             if (table) {
                                 table.style.minWidth = '100%';
@@ -585,7 +633,7 @@ const App: React.FC = () => {
                             }
                         }
 
-                        // Optional: Personal List
+                        // 可选: 个人清单
                         if (includePersonalList) {
                             const listContainer = clonedDoc.createElement('div');
                             listContainer.style.marginTop = '20px';
@@ -631,7 +679,7 @@ const App: React.FC = () => {
                             container.appendChild(listContainer);
                         }
 
-                        // Footer
+                        // 页脚
                         const footer = clonedDoc.createElement('div');
                         footer.style.marginTop = '20px';
                         footer.style.paddingTop = '10px';
@@ -673,7 +721,7 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="flex items-center gap-3">
-                    {/* Undo/Redo Controls */}
+                    {/* 撤销/重做 控件 */}
                     <div className="flex items-center gap-1 mr-2 border-r pr-2 border-gray-300">
                         <button onClick={handleUndo} disabled={historyIndex <= 0}
                                 className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition"
@@ -787,20 +835,30 @@ const App: React.FC = () => {
                 <StudentList students={students}/>
 
                 <main className="flex-1 overflow-auto bg-gray-100 p-6 flex justify-center">
-                    <div className="w-full max-w-[1400px] bg-white shadow-lg rounded-xl h-fit min-h-[500px]">
-                        <ScheduleGrid
-                            students={students}
-                            assignments={assignments}
-                            onAssign={handleAssign}
-                            onSwap={handleSwap}
-                            groupCount={groupCount}
-                            conflicts={conflicts}
-                        />
+                    <div className="w-full max-w-[1400px] flex flex-col">
+                        <div className="w-full bg-white shadow-lg rounded-xl h-fit min-h-[500px]">
+                            <ScheduleGrid
+                                students={students}
+                                assignments={assignments}
+                                onAssign={handleAssign}
+                                onSwap={handleSwap}
+                                groupCount={groupCount}
+                                conflicts={conflicts}
+                            />
+                        </div>
                     </div>
                 </main>
 
-                <SuggestionsPanel suggestions={suggestions} students={students}
-                                  onApplySuggestion={handleApplySuggestion}/>
+                <div
+                    className="flex flex-col w-80 shrink-0 bg-gradient-to-b from-white to-gray-50 border-l border-gray-200 shadow-lg h-full overflow-hidden">
+                    <div className="p-4 bg-white border-b border-gray-200">
+                        <CalculationLog logs={logs} stats={stats} isCalculating={isCalculating}/>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                        <SuggestionsPanel suggestions={suggestions} students={students}
+                                          onApplySuggestion={handleApplySuggestion}/>
+                    </div>
+                </div>
             </div>
 
             <footer className="bg-white border-t py-2 px-6 text-center text-xs text-gray-400 shrink-0">

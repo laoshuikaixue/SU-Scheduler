@@ -19,7 +19,7 @@ import {createPortal} from 'react-dom';
 
 interface Props {
     students: Student[];
-    assignments: Record<string, string>; // Key is taskId::groupId
+    assignments: Record<string, string>; // 键是 taskId::groupId
     onAssign: (taskId: string, groupId: number, studentId: string | null) => void;
     onSwap?: (taskId1: string, groupId1: number, taskId2: string, groupId2: number) => void;
     groupCount: number;
@@ -33,21 +33,21 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
     const sensors = useSensors(
         useSensor(PointerSensor, {
             activationConstraint: {
-                distance: 8, // 8px movement required to start drag, allows clicks
+                distance: 8, // 移动 8px 开始拖动，允许点击
             },
         })
     );
 
-    // Generate group indices based on count
+    // 根据数量生成组索引
     const groups = useMemo(() => Array.from({length: groupCount}, (_, i) => i), [groupCount]);
 
-    // Group names helper
+    // 组名辅助函数
     const getGroupName = (idx: number) => {
         const map = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
         return `第${map[idx] || (idx + 1)}组`;
     };
 
-    // Group tasks for rendering
+    // 分组任务用于渲染
     const tasksByCategory = {
         [TaskCategory.CLEANING]: ALL_TASKS.filter(t => t.category === TaskCategory.CLEANING),
         [TaskCategory.INTERVAL_EXERCISE]: ALL_TASKS.filter(t => t.category === TaskCategory.INTERVAL_EXERCISE),
@@ -59,7 +59,7 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
         const {active} = event;
         setActiveId(active.id as string);
 
-        // Extract student info for overlay
+        // 提取学生信息用于覆盖层
         const [taskId, groupIdStr] = (active.id as string).split('::');
         const studentId = assignments[`${taskId}::${groupIdStr}`];
         const student = students.find(s => s.id === studentId);
@@ -90,7 +90,7 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
                 <div className="text-center mb-6">
                     <h1 className="text-2xl font-bold text-gray-800">学生会常规检查安排表</h1>
                     <p id="schedule-description" className="text-gray-500 text-sm mt-1">
-                        当前编排：{groupCount} 组 | 支持拖拽或简拼输入（自动匹配首字母）
+                        当前编排：{groupCount} 组
                     </p>
                 </div>
 
@@ -111,13 +111,13 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
                         </thead>
                         <tbody>
                         {Object.entries(tasksByCategory).map(([category, tasks]) => {
-                            // We need to calculate row spans for SubCategories
+                            // 我们需要计算子类别的行跨度
                             const subCatCounts: Record<string, number> = {};
                             tasks.forEach(t => {
                                 subCatCounts[t.subCategory] = (subCatCounts[t.subCategory] || 0) + 1;
                             });
 
-                            // Track rendered subcats to avoid dupes
+                            // 跟踪已渲染的子类别以避免重复
                             const renderedSubCats: Record<string, boolean> = {};
 
                             return tasks.map((task, index) => {
@@ -150,7 +150,7 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
                                             {task.name}
                                         </td>
 
-                                        {/* Render Groups */}
+                                        {/* 渲染组 */}
                                         {groups.map(g => {
                                             const key = `${task.id}::${g}`;
                                             const studentId = assignments[key];
@@ -204,7 +204,7 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
     );
 };
 
-// Wrapper to handle DnD and Rendering logic cleanly
+// 包装器以清晰处理拖拽和渲染逻辑
 const CellWrapper: React.FC<{
     id: string;
     student: Student | undefined;
@@ -218,14 +218,14 @@ const CellWrapper: React.FC<{
 }> = ({id, student, validation, onAssign, allStudents, task, groupIndex, conflict, assignments}) => {
     const {setNodeRef, attributes, listeners, isDragging} = useDraggable({
         id: id,
-        disabled: !student // Only draggable if there is a student
+        disabled: !student // 仅当有学生时可拖拽
     });
 
     const {setNodeRef: setDroppableRef, isOver} = useDroppable({
         id: id
     });
 
-    // Determine background color based on state
+    // 根据状态确定背景颜色
     let bgClass = 'bg-white';
     if (isDragging) {
         bgClass = 'opacity-30';
@@ -296,7 +296,7 @@ const CellInput: React.FC<{
                 const nameMatch = s.name.includes(query) || (s.pinyinInitials && s.pinyinInitials.includes(lowerQ));
                 if (!nameMatch) return false;
 
-                // Also check basic validity for search results (optional, but good UX)
+                // 同时也检查搜索结果的基本有效性（可选，但用户体验更好）
                 return canAssign(s, task).valid;
             }).slice(0, 5);
             setSuggestions(matches);
@@ -327,7 +327,7 @@ const CellInput: React.FC<{
                     }}
                 >
                     <div
-                        className="flex flex-col items-center leading-tight pointer-events-none"> {/* Pointer events none on text to ensure drag hits parent */}
+                        className="flex flex-col items-center leading-tight pointer-events-none"> {/* 文本上的指针事件设为none以确保拖拽命中父元素 */}
                         <span className={`text-sm font-medium ${isValid ? 'text-gray-900' : 'text-red-600'}`}>
               {getDisplayName(value)}
             </span>
@@ -335,7 +335,7 @@ const CellInput: React.FC<{
                             <span className="text-[10px] text-red-500 scale-75 origin-center">{validationMsg}</span>}
                     </div>
                     <button
-                        onPointerDown={(e) => e.stopPropagation()} // Stop drag from starting on X button
+                        onPointerDown={(e) => e.stopPropagation()} // 阻止从X按钮开始拖拽
                         onClick={(e) => {
                             e.stopPropagation();
                             onSelect(null);
@@ -348,7 +348,7 @@ const CellInput: React.FC<{
             ) : (
                 <div
                     className="relative w-full h-full flex items-center"
-                    onPointerDown={(e) => e.stopPropagation()} // Stop drag propagation when editing
+                    onPointerDown={(e) => e.stopPropagation()} // 编辑时阻止拖拽传播
                 >
                     <input
                         ref={inputRef}

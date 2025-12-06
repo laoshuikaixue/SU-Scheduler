@@ -32,7 +32,7 @@ export const checkGroupAvailability = (
     student: Student,
     task: TaskDefinition,
     groupId: number,
-    currentAssignments: Record<string, string>, // key: taskId::groupId
+    currentAssignments: Record<string, string>, // 键: taskId::groupId
     conflicts: ConflictInfo[] = []
 ): { valid: boolean; reason?: string } => {
     // 1. 基础资格检查
@@ -196,9 +196,9 @@ const calculateEnergy = (
     const assignedCount = Object.keys(assignments).length;
     energy += (totalSlots - assignedCount) * 10000;
 
-    // 预处理: Group -> Student -> Tasks
+    // 预处理: 组 -> 学生 -> 任务
     const groupUsage: Record<number, Record<string, TaskDefinition[]>> = {};
-    // 预处理: Student -> Groups
+    // 预处理: 学生 -> 组
     const studentGroups: Record<string, Set<number>> = {};
 
     Object.entries(assignments).forEach(([key, sid]) => {
@@ -237,7 +237,7 @@ const calculateEnergy = (
             const hasCleaning = tasks.some(t => t.category === TaskCategory.CLEANING);
             const hasEvening = tasks.some(t => t.category === TaskCategory.EVENING_STUDY);
             if (hasCleaning && hasEvening) energy += 3000; // 严重互斥
-            
+
             // 同类互斥
             const cleanCount = tasks.filter(t => t.category === TaskCategory.CLEANING).length;
             const eveningCount = tasks.filter(t => t.category === TaskCategory.EVENING_STUDY).length;
@@ -272,24 +272,24 @@ export const optimizeWithSA = (
     numGroups: number
 ): Record<string, string> => {
     let currentAssignments = {...initialAssignments};
-    
+
     // 1. 填充未分配的任务 (随机分配给符合硬性约束的人，暂时忽略软约束)
     // 这是为了让 SA 有一个完整的解空间去优化
     const studentMap = new Map(students.map(s => [s.id, s]));
-    
+
     // 按组归类学生，方便快速查找
     const studentsByGroup: Student[][] = Array.from({length: numGroups}, () => []);
     // 简单地全量分配，这里我们假设学生已经通过某种方式分好组了？
     // 不，这里我们拿到的 students 是全量的。我们需要知道哪些学生属于哪个组。
     // 我们可以推断：如果学生在 initialAssignments 中出现过在某组，他就属于该组。
     // 对于没出现过的学生，随机分配一个组归属。
-    
+
     const studentGroupMap = new Map<string, number>();
     Object.entries(currentAssignments).forEach(([key, sid]) => {
         const [_, gStr] = key.split('::');
         studentGroupMap.set(sid, parseInt(gStr));
     });
-    
+
     students.forEach(s => {
         if (!studentGroupMap.has(s.id)) {
             // 这是一个未被分配任务的学生，随机分配一个组归属，作为潜在替补
@@ -342,11 +342,11 @@ export const optimizeWithSA = (
             // 变异策略: 重新分配给组内另一个符合硬性约束的学生
             const groupStudents = studentsByGroup[groupId];
             const candidates = groupStudents.filter(s => canAssign(s, task).valid);
-            
+
             if (candidates.length > 0) {
                 const newStudent = candidates[Math.floor(Math.random() * candidates.length)];
                 newAssignments[randomKey] = newStudent.id;
-                
+
                 // 计算新能量
                 const newEnergy = calculateEnergy(newAssignments, students, numGroups);
                 const delta = newEnergy - currentEnergy;
@@ -554,7 +554,7 @@ export const autoScheduleMultiGroup = (
         // 检查本次分配的完整度
         const filledCount = Object.keys(newAssignments).length;
 
-        // 计算负载均衡度 (Sum of Squares of workloads)
+        // 计算负载均衡度
         // Sum(x^2) 越小，说明分布越均匀 (例如 2+2 < 3+1 => 8 < 10)
         const studentTotalLoad: Record<string, number> = {};
         Object.values(newAssignments).forEach(sid => {
@@ -581,6 +581,195 @@ export const autoScheduleMultiGroup = (
     }
 
     // 返回多次尝试中的最佳结果
+    return bestAssignments;
+};
+
+export interface CalculationStats {
+    attempt: number;
+    coverage: number;
+    totalSlots: number;
+    variance: number;
+    bestCoverage: number;
+    bestVariance: number;
+}
+
+export const autoScheduleMultiGroupAsync = async (
+    students: Student[],
+    currentAssignments: Record<string, string>,
+    numGroups: number,
+    onProgress: (log: string, stats?: CalculationStats) => void
+): Promise<Record<string, string>> => {
+    let bestAssignments: Record<string, string> = {};
+    let maxFilledCount = -1;
+    let minLoadVariance = Infinity;
+    const totalSlots = ALL_TASKS.length * numGroups;
+    const MAX_RETRIES = 50;
+
+    const lockedAssignments = new Map<string, Set<number>>();
+    Object.entries(currentAssignments).forEach(([key, sId]) => {
+        const [_, gStr] = key.split('::');
+        const gId = parseInt(gStr);
+        if (!lockedAssignments.has(sId)) lockedAssignments.set(sId, new Set());
+        lockedAssignments.get(sId)!.add(gId);
+    });
+
+    onProgress(`初始化完成，准备进行 ${MAX_RETRIES} 次尝试...`, {
+        attempt: 0,
+        coverage: 0,
+        totalSlots,
+        variance: 0,
+        bestCoverage: 0,
+        bestVariance: 0
+    });
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        // 允许UI渲染，但不增加额外延迟
+        await new Promise(resolve => setTimeout(resolve, 0));
+
+        const newAssignments = {...currentAssignments};
+        const studentsPerGroup = distributeStudentsToGroups(students, numGroups, lockedAssignments);
+
+        const sortedTasks = [...ALL_TASKS].sort((a, b) => {
+            const deptDiff = a.allowedDepartments.length - b.allowedDepartments.length;
+            if (deptDiff !== 0) return deptDiff;
+            if (a.forbiddenGrade && !b.forbiddenGrade) return -1;
+            if (!a.forbiddenGrade && b.forbiddenGrade) return 1;
+            return 0;
+        });
+
+        for (let g = 0; g < numGroups; g++) {
+            const groupWorkload: Record<string, number> = {};
+            const studentCategories: Record<string, Set<TaskCategory>> = {};
+            const studentTimeSlots: Record<string, Set<TimeSlot>> = {};
+            const groupStudents = studentsPerGroup[g];
+
+            groupStudents.forEach(s => {
+                groupWorkload[s.id] = 0;
+                studentCategories[s.id] = new Set();
+                studentTimeSlots[s.id] = new Set();
+            });
+
+            ALL_TASKS.forEach(task => {
+                const key = `${task.id}::${g}`;
+                const sid = newAssignments[key];
+                if (sid) {
+                    if (groupWorkload[sid] !== undefined) {
+                        groupWorkload[sid] = (groupWorkload[sid] || 0) + 1;
+                        studentCategories[sid].add(task.category);
+                        studentTimeSlots[sid].add(task.timeSlot);
+                    }
+                }
+            });
+
+            for (const task of sortedTasks) {
+                const key = `${task.id}::${g}`;
+                if (newAssignments[key]) continue;
+
+                let candidates = groupStudents.filter(student => {
+                    if (groupWorkload[student.id] >= 2) return false;
+                    const isIndoorInterval = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
+                    if (!isIndoorInterval && studentTimeSlots[student.id].has(task.timeSlot)) return false;
+                    if (!canAssign(student, task).valid) return false;
+
+                    const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
+                    const hasEvening = studentCategories[student.id].has(TaskCategory.EVENING_STUDY);
+                    if (task.category === TaskCategory.EVENING_STUDY && hasCleaning) return false;
+                    if (task.category === TaskCategory.CLEANING && hasEvening) return false;
+                    if (task.category === TaskCategory.CLEANING && hasCleaning) return false;
+                    if (task.category === TaskCategory.EVENING_STUDY && hasEvening) return false;
+                    return true;
+                });
+
+                if (candidates.length === 0 && task.category === TaskCategory.EYE_EXERCISE) {
+                    candidates = groupStudents.filter(student => {
+                        if (studentTimeSlots[student.id].has(task.timeSlot)) return false;
+                        if (!canAssign(student, task).valid) return false;
+                        const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
+                        const hasEvening = studentCategories[student.id].has(TaskCategory.EVENING_STUDY);
+                        if (hasEvening) return false;
+                        if (groupWorkload[student.id] === 2 && !studentCategories[student.id].has(TaskCategory.EYE_EXERCISE)) return false;
+                        if (groupWorkload[student.id] >= 3) return false;
+                        return true;
+                    });
+                }
+
+                if (candidates.length === 0) continue;
+
+                candidates.sort((a, b) => {
+                    const loadA = groupWorkload[a.id];
+                    const loadB = groupWorkload[b.id];
+                    if (loadA !== loadB) return loadA - loadB;
+                    if (task.category === TaskCategory.EYE_EXERCISE) {
+                        const hasCleanA = studentCategories[a.id].has(TaskCategory.CLEANING);
+                        const hasCleanB = studentCategories[b.id].has(TaskCategory.CLEANING);
+                        if (hasCleanA && !hasCleanB) return -1;
+                        if (!hasCleanA && hasCleanB) return 1;
+                    }
+                    return Math.random() - 0.5;
+                });
+
+                const bestCandidate = candidates[0];
+                newAssignments[key] = bestCandidate.id;
+                groupWorkload[bestCandidate.id]++;
+                studentCategories[bestCandidate.id].add(task.category);
+                studentTimeSlots[bestCandidate.id].add(task.timeSlot);
+            }
+        }
+
+        const filledCount = Object.keys(newAssignments).length;
+        const studentTotalLoad: Record<string, number> = {};
+        Object.values(newAssignments).forEach(sid => {
+            studentTotalLoad[sid] = (studentTotalLoad[sid] || 0) + 1;
+        });
+
+        let currentLoadVariance = 0;
+        Object.values(studentTotalLoad).forEach(load => {
+            currentLoadVariance += load * load;
+        });
+
+        const logMsg = `[Attempt ${attempt + 1}] 覆盖率: ${(filledCount / totalSlots * 100).toFixed(1)}% (${filledCount}/${totalSlots}) 方差: ${currentLoadVariance}`;
+
+        const currentStats: CalculationStats = {
+            attempt: attempt + 1,
+            coverage: filledCount,
+            totalSlots,
+            variance: currentLoadVariance,
+            bestCoverage: maxFilledCount < 0 ? 0 : maxFilledCount,
+            bestVariance: minLoadVariance === Infinity ? 0 : minLoadVariance
+        };
+
+        onProgress(logMsg, currentStats);
+
+        if (filledCount > maxFilledCount) {
+            maxFilledCount = filledCount;
+            minLoadVariance = currentLoadVariance;
+            bestAssignments = newAssignments;
+            onProgress(`>>> 发现更优解! 覆盖率提升至 ${filledCount}. Cost = Var(${currentLoadVariance}) - Cov(${filledCount})`, {
+                ...currentStats,
+                bestCoverage: maxFilledCount,
+                bestVariance: minLoadVariance
+            });
+        } else if (filledCount === maxFilledCount) {
+            if (currentLoadVariance < minLoadVariance) {
+                minLoadVariance = currentLoadVariance;
+                bestAssignments = newAssignments;
+                onProgress(`>>> 发现更优解! 方差优化至 ${currentLoadVariance}. Cost = Var(${currentLoadVariance}) - Cov(${filledCount})`, {
+                    ...currentStats,
+                    bestCoverage: maxFilledCount,
+                    bestVariance: minLoadVariance
+                });
+            }
+        }
+    }
+
+    onProgress(`计算完成。最终覆盖率: ${maxFilledCount}/${totalSlots}`, {
+        attempt: MAX_RETRIES,
+        coverage: maxFilledCount,
+        totalSlots,
+        variance: minLoadVariance,
+        bestCoverage: maxFilledCount,
+        bestVariance: minLoadVariance
+    });
     return bestAssignments;
 };
 

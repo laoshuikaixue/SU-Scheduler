@@ -25,8 +25,7 @@ export const SuggestionsPanel: React.FC<Props> = ({suggestions, students, onAppl
 
     if (suggestions.length === 0) {
         return (
-            <div
-                className="bg-gradient-to-b from-white to-gray-50 border-l border-gray-200 w-80 shrink-0 flex flex-col shadow-lg">
+            <div className="h-full flex flex-col">
                 <div className="p-6 border-b border-gray-200 bg-white">
                     <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                         <CheckCircle2 className="text-green-500"/> 智能检查
@@ -49,8 +48,7 @@ export const SuggestionsPanel: React.FC<Props> = ({suggestions, students, onAppl
     const warnings = suggestions.filter(s => s.conflict.type === 'warning');
 
     return (
-        <div
-            className="bg-gradient-to-b from-white to-gray-50 border-l border-gray-200 w-80 shrink-0 flex flex-col shadow-lg h-full overflow-hidden">
+        <div className="h-full flex flex-col">
             <div className="p-6 border-b border-gray-200 bg-white shadow-sm z-10">
                 <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
                     <AlertTriangle className="text-amber-500"/>
@@ -65,7 +63,7 @@ export const SuggestionsPanel: React.FC<Props> = ({suggestions, students, onAppl
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-thin scrollbar-thumb-gray-200">
-                {/* Errors Section */}
+                {/* 错误部分 */}
                 {errors.length > 0 && (
                     <div className="space-y-3">
                         <div className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-1">必须修复</div>
@@ -110,7 +108,7 @@ export const SuggestionsPanel: React.FC<Props> = ({suggestions, students, onAppl
                     </div>
                 )}
 
-                {/* Warnings Section */}
+                {/* 警告部分 */}
                 {warnings.length > 0 && (
                     <div className="space-y-3 pt-2">
                         <div className="text-xs font-bold text-gray-400 uppercase tracking-wider ml-1">建议关注</div>
