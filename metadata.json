@@ -1,0 +1,5 @@
+{
+  "name": "SU-Scheduler",
+  "description": "A modern, drag-and-drop inspection roster scheduler for Student Unions with intelligent conflict detection and auto-scheduling.",
+  "requestFramePermissions": []
+}
