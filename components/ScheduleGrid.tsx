@@ -24,9 +24,10 @@ interface Props {
     onSwap?: (taskId1: string, groupId1: number, taskId2: string, groupId2: number) => void;
     groupCount: number;
     conflicts?: ConflictInfo[];
+    enableMerge?: boolean;
 }
 
-const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap, groupCount, conflicts = []}) => {
+const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap, groupCount, conflicts = [], enableMerge = false}) => {
     const [activeId, setActiveId] = useState<string | null>(null);
     const [activeStudent, setActiveStudent] = useState<Student | null>(null);
 
@@ -48,12 +49,74 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
     };
 
     // 分组任务用于渲染
-    const tasksByCategory = {
+    const tasksByCategory = useMemo(() => ({
         [TaskCategory.CLEANING]: ALL_TASKS.filter(t => t.category === TaskCategory.CLEANING),
         [TaskCategory.INTERVAL_EXERCISE]: ALL_TASKS.filter(t => t.category === TaskCategory.INTERVAL_EXERCISE),
         [TaskCategory.EYE_EXERCISE]: ALL_TASKS.filter(t => t.category === TaskCategory.EYE_EXERCISE),
         [TaskCategory.EVENING_STUDY]: ALL_TASKS.filter(t => t.category === TaskCategory.EVENING_STUDY),
-    };
+    }), []);
+
+    // 计算合并信息
+    const mergeInfo = useMemo(() => {
+        if (!enableMerge) return {};
+
+        const info: Record<string, { rowSpan: number; hidden: boolean }> = {};
+
+        // 按类别遍历
+        Object.values(tasksByCategory).forEach(categoryTasks => {
+            // 按子类别分组
+            const subCategoryTasks: Record<string, any[]> = {};
+            categoryTasks.forEach(t => {
+                if (!subCategoryTasks[t.subCategory]) subCategoryTasks[t.subCategory] = [];
+                subCategoryTasks[t.subCategory].push(t);
+            });
+
+            // 在每个子类别内部进行合并计算
+            Object.values(subCategoryTasks).forEach(tasks => {
+                for (let g = 0; g < groupCount; g++) {
+                    let i = 0;
+                    while (i < tasks.length) {
+                        const task = tasks[i];
+                        const key = `${task.id}::${g}`;
+                        const studentId = assignments[key];
+
+                        if (!studentId) {
+                            // 无人分配，不合并
+                            info[key] = { rowSpan: 1, hidden: false };
+                            i++;
+                            continue;
+                        }
+
+                        let span = 1;
+                        // 向下查找相同的人
+                        while (i + span < tasks.length) {
+                            const nextTask = tasks[i + span];
+                            const nextKey = `${nextTask.id}::${g}`;
+                            const nextStudentId = assignments[nextKey];
+
+                            if (nextStudentId === studentId) {
+                                span++;
+                            } else {
+                                break;
+                            }
+                        }
+
+                        // 记录合并信息
+                        info[key] = { rowSpan: span, hidden: false };
+                        for (let j = 1; j < span; j++) {
+                            const hiddenTask = tasks[i + j];
+                            const hiddenKey = `${hiddenTask.id}::${g}`;
+                            info[hiddenKey] = { rowSpan: 0, hidden: true };
+                        }
+
+                        i += span;
+                    }
+                }
+            });
+        });
+
+        return info;
+    }, [tasksByCategory, assignments, groupCount, enableMerge]);
 
     // 找到每个组组长出现的第一个任务ID
     const leaderFirstTaskIds = useMemo(() => {
@@ -168,13 +231,17 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
                                             </td>
                                         )}
 
-                                        <td className="border border-gray-400 p-2 text-gray-800 text-center">
+                                        <td className="border border-gray-400 p-2 text-gray-800 text-center align-middle">
                                             {task.name}
                                         </td>
 
                                         {/* 渲染组 */}
                                         {groups.map(g => {
                                             const key = `${task.id}::${g}`;
+                                            const merge = mergeInfo[key];
+
+                                            if (merge?.hidden) return null;
+
                                             const studentId = assignments[key];
                                             const student = students.find(s => s.id === studentId);
                                             const validation = student ? canAssign(student, task) : {valid: true};
@@ -199,6 +266,7 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
                                                     conflict={cellConflict}
                                                     assignments={assignments}
                                                     isFirstLeaderOccurrence={leaderFirstTaskIds[g] === task.id}
+                                                    rowSpan={merge?.rowSpan || 1}
                                                 />
                                             );
                                         })}
@@ -239,7 +307,8 @@ const CellWrapper: React.FC<{
     conflict?: ConflictInfo;
     assignments: Record<string, string>;
     isFirstLeaderOccurrence?: boolean;
-}> = ({id, student, validation, onAssign, allStudents, task, groupIndex, conflict, assignments, isFirstLeaderOccurrence}) => {
+    rowSpan?: number;
+}> = ({id, student, validation, onAssign, allStudents, task, groupIndex, conflict, assignments, isFirstLeaderOccurrence, rowSpan = 1}) => {
     const {setNodeRef, attributes, listeners, isDragging} = useDraggable({
         id: id,
         disabled: !student // 仅当有学生时可拖拽
@@ -266,13 +335,14 @@ const CellWrapper: React.FC<{
     return (
         <td
             ref={setDroppableRef}
-            className={`border border-gray-400 p-0 relative transition-all duration-200 ${bgClass}`}
+            className={`border border-gray-400 p-0 relative transition-all duration-200 align-middle ${bgClass}`}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
                 e.preventDefault();
                 const sid = e.dataTransfer.getData('studentId');
                 if (sid) onAssign(sid);
             }}
+            rowSpan={rowSpan}
         >
             <div ref={setNodeRef} {...listeners} {...attributes} className="h-full w-full">
                 <CellInput

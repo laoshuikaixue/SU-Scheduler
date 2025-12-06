@@ -86,6 +86,9 @@ const App: React.FC = () => {
     const [includePersonalList, setIncludePersonalList] = useState(false);
     const [imageScale, setImageScale] = useState(2);
     const [targetWidth, setTargetWidth] = useState<'auto' | 'a4' | 'a4_landscape'>('auto');
+    const [isExportingImage, setIsExportingImage] = useState(false);
+    const [exportRemarks, setExportRemarks] = useState('');
+    const [exportTitle, setExportTitle] = useState('学生会检查安排表');
     const [clearDialog, setClearDialog] = useState<{ isOpen: boolean, clearStudents: boolean }>({
         isOpen: false,
         clearStudents: false
@@ -373,8 +376,8 @@ const App: React.FC = () => {
                 const py = pinyin(name, {pattern: 'first', toneType: 'none', type: 'array'}).join('');
 
                 const role = row['职务'] || row['角色'];
-                // 自动根据职务判断是否为负责人（显示皇冠标记）
-                // 注意：主席团成员不应被标记为组长（根据用户反馈）
+                // 自动根据职务判断是否为组长
+                // 注意：主席团成员不应被标记为组长
                 const isLeader = role && (role.includes('部长') || role.includes('组长'));
 
                 return {
@@ -407,67 +410,80 @@ const App: React.FC = () => {
         XLSX.writeFile(wb, "学生会名单模板.xlsx");
     };
 
-    const getPersonalTasksData = () => {
-        const studentTasks: Record<string, string[]> = {};
+    const getGroupedPersonalTasks = () => {
+        const result: {
+            groupId: number;
+            studentTasks: Record<string, string[]>;
+            sortedStudents: Student[];
+        }[] = [];
 
-        // 按学生分组分配
-        Object.entries(assignments).forEach(([key, studentId]) => {
-            const [taskId, groupIdxStr] = key.split('::');
-            const groupIdx = parseInt(groupIdxStr);
-            const task = ALL_TASKS.find(t => t.id === taskId);
+        for (let g = 0; g < groupCount; g++) {
+            const groupTasks: Record<string, string[]> = {};
+            const groupStudentsSet = new Set<string>();
 
-            if (!studentId || !task) return;
+            Object.entries(assignments).forEach(([key, studentId]) => {
+                const [taskId, groupIdxStr] = key.split('::');
+                const groupIdx = parseInt(groupIdxStr);
 
-            if (!studentTasks[studentId]) studentTasks[studentId] = [];
+                if (groupIdx !== g) return; // 仅处理当前组
 
-            // 格式化任务名称
-            let catName = task.category;
-            if (catName === TaskCategory.EYE_EXERCISE) catName = '眼操';
-            // 如果名称中包含 '点位' 则移除，以符合用户偏好 "室外1" vs "室外点位1"
-            // 同时将括号标准化为全角
-            const cleanName = task.name.replace('点位', '').replace(/\(/g, '（').replace(/\)/g, '）');
+                const task = ALL_TASKS.find(t => t.id === taskId);
+                if (!studentId || !task) return;
 
-            // 避免重复，例如 "晚自习晚自习"
-            const sub = task.subCategory === task.category ? '' : task.subCategory;
+                if (!groupTasks[studentId]) groupTasks[studentId] = [];
+                groupStudentsSet.add(studentId);
 
-            const taskName = `${catName}${sub}${cleanName}`;
+                // 格式化任务名称
+                let catName = task.category;
+                if (catName === TaskCategory.EYE_EXERCISE) catName = '眼操';
+                const cleanName = task.name.replace('点位', '').replace(/\(/g, '（').replace(/\)/g, '）');
+                const sub = task.subCategory === task.category ? '' : task.subCategory;
+                const taskName = `${catName}${sub}${cleanName}`;
 
-            // 仅当存在多个组时附加组信息
-            const groupSuffix = groupCount > 1 ? `(第${groupIdx + 1}组)` : '';
-            studentTasks[studentId].push(`${taskName}${groupSuffix}`);
-        });
+                groupTasks[studentId].push(taskName);
+            });
 
-        // 学生排序
-        const sortedStudents = [...students].sort((a, b) => {
-            if (a.grade !== b.grade) return a.grade - b.grade;
-            if (a.classNum !== b.classNum) return a.classNum - b.classNum;
-            return a.id.localeCompare(b.id);
-        });
+            // 学生排序
+            const groupStudents = students.filter(s => groupStudentsSet.has(s.id));
+            groupStudents.sort((a, b) => {
+                if (a.grade !== b.grade) return a.grade - b.grade;
+                if (a.classNum !== b.classNum) return a.classNum - b.classNum;
+                return a.id.localeCompare(b.id);
+            });
 
-        return {studentTasks, sortedStudents};
+            result.push({
+                groupId: g,
+                studentTasks: groupTasks,
+                sortedStudents: groupStudents
+            });
+        }
+        return result;
     };
 
     const exportPersonalTasks = () => {
-        const {studentTasks, sortedStudents} = getPersonalTasksData();
-
+        const groupedData = getGroupedPersonalTasks();
         let content = '个人任务清单：\n';
-        let currentClass = '';
 
-        sortedStudents.forEach(student => {
-            const tasks = studentTasks[student.id];
-            if (!tasks || tasks.length === 0) return;
+        groupedData.forEach(({groupId, studentTasks, sortedStudents}) => {
+            content += `\n========== 第 ${groupId + 1} 组 ==========\n`;
+            let currentClass = '';
 
-            const className = formatClassName(student.grade, student.classNum);
+            sortedStudents.forEach(student => {
+                const tasks = studentTasks[student.id];
+                if (!tasks || tasks.length === 0) return;
 
-            if (className !== currentClass) {
-                content += `\n${className}\n`;
-                currentClass = className;
-            }
+                const className = formatClassName(student.grade, student.classNum);
 
-            // 对任务进行排序以确保顺序一致
-            tasks.sort();
+                if (className !== currentClass) {
+                    content += `\n【${className}】\n`;
+                    currentClass = className;
+                }
 
-            content += `${student.name}： ${tasks.join('；')}\n`;
+                // 对任务进行排序以确保顺序一致
+                tasks.sort();
+
+                content += `${student.name}： ${tasks.join('；')}\n`;
+            });
         });
 
         const blob = new Blob([content], {type: 'text/plain;charset=utf-8'});
@@ -720,123 +736,245 @@ const App: React.FC = () => {
     };
 
     const performExportImage = async () => {
-        const element = document.getElementById('schedule-export-area');
-        if (element) {
-            const canvas = await html2canvas(element, {
-                scale: imageScale,
-                onclone: (clonedDoc) => {
-                    // 1. 隐藏描述文本
-                    const desc = clonedDoc.getElementById('schedule-description');
-                    if (desc) desc.style.display = 'none';
+        setIsExportingImage(true);
+        // 给一点时间让 React 渲染合并后的单元格
+        setTimeout(async () => {
+            const element = document.getElementById('schedule-export-area');
+            if (element) {
+                const canvas = await html2canvas(element, {
+                    scale: imageScale,
+                    onclone: (clonedDoc) => {
+                        // 1. 隐藏描述文本
+                        const desc = clonedDoc.getElementById('schedule-description');
+                        if (desc) desc.style.display = 'none';
 
-                    // 1.1 隐藏校验信息 (如：部门职责不符)
-                    const validationMsgs = clonedDoc.querySelectorAll('.validation-msg');
-                    validationMsgs.forEach((el: any) => el.style.display = 'none');
-
-                    // 1.2 移除错误状态的红色背景
-                    const errorCells = clonedDoc.querySelectorAll('.bg-red-100, .bg-red-50');
-                    errorCells.forEach((el: any) => {
-                        el.classList.remove('bg-red-100');
-                        el.classList.remove('bg-red-50');
-                        el.classList.add('bg-white');
-                    });
-
-                    // 1.3 移除错误状态的红色文字
-                    const errorTexts = clonedDoc.querySelectorAll('.text-red-600');
-                    errorTexts.forEach((el: any) => {
-                        el.classList.remove('text-red-600');
-                        el.classList.add('text-gray-900');
-                    });
-
-                    // 2. 添加个人清单和页脚
-                    const container = clonedDoc.getElementById('schedule-export-area');
-                    if (container) {
-                        // 应用宽度设置
-                        if (targetWidth === 'a4' || targetWidth === 'a4_landscape') {
-                            const width = targetWidth === 'a4' ? '794px' : '1123px';
-                            container.style.width = width;
-                            container.style.minWidth = 'unset';
-                            // 查找并调整表格
-                            const table = container.querySelector('table');
-                            if (table) {
-                                table.style.minWidth = '100%';
-                                table.style.width = '100%';
-                            }
+                        // 1.0 更新标题
+                        const titleEl = clonedDoc.querySelector('h1');
+                        if (titleEl) {
+                            titleEl.innerText = exportTitle;
                         }
 
-                        // 可选: 个人清单
-                        if (includePersonalList) {
-                            const listContainer = clonedDoc.createElement('div');
-                            listContainer.style.marginTop = '20px';
-                            listContainer.style.paddingTop = '20px';
-                            listContainer.style.borderTop = '2px dashed #ccc';
-                            listContainer.style.textAlign = 'left';
-                            listContainer.style.color = '#000';
+                        // 1.1 隐藏校验信息 (如：部门职责不符)
+                        const validationMsgs = clonedDoc.querySelectorAll('.validation-msg');
+                        validationMsgs.forEach((el: any) => el.style.display = 'none');
 
-                            const title = clonedDoc.createElement('h2');
-                            title.innerText = '个人任务清单';
-                            title.style.fontSize = '18px';
-                            title.style.fontWeight = 'bold';
-                            title.style.marginBottom = '15px';
-                            listContainer.appendChild(title);
+                        // 1.2 移除错误状态的红色背景
+                        const errorCells = clonedDoc.querySelectorAll('.bg-red-100, .bg-red-50');
+                        errorCells.forEach((el: any) => {
+                            el.classList.remove('bg-red-100');
+                            el.classList.remove('bg-red-50');
+                            el.classList.add('bg-white');
+                        });
 
-                            const {studentTasks, sortedStudents} = getPersonalTasksData();
-                            let currentClass = '';
+                        // 1.3 移除错误状态的红色文字
+                        const errorTexts = clonedDoc.querySelectorAll('.text-red-600');
+                        errorTexts.forEach((el: any) => {
+                            el.classList.remove('text-red-600');
+                            el.classList.add('text-gray-900');
+                        });
 
-                            sortedStudents.forEach(student => {
-                                let tasks = studentTasks[student.id] || [];
-                                if (tasks.length === 0) return;
-
-                                // NEW: 合并显示
-                                const hasG1A = tasks.includes('高一 (1-3班)');
-                                const hasG1B = tasks.includes('高一 (4-6班)');
-                                
-                                if (hasG1A && hasG1B) {
-                                    tasks = tasks.filter(t => t !== '高一 (1-3班)' && t !== '高一 (4-6班)');
-                                    tasks.push('高一');
-                                }
-
-                                const className = formatClassName(student.grade, student.classNum);
-                                if (className !== currentClass) {
-                                    const classHeader = clonedDoc.createElement('div');
-                                    classHeader.innerText = className;
-                                    classHeader.style.fontWeight = 'bold';
-                                    classHeader.style.marginTop = '12px';
-                                    classHeader.style.marginBottom = '4px';
-                                    classHeader.style.fontSize = '15px';
-                                    listContainer.appendChild(classHeader);
-                                    currentClass = className;
-                                }
-
-                                const row = clonedDoc.createElement('div');
-                                tasks.sort();
-                                row.innerText = `${student.name}： ${tasks.join('；')}`;
-                                row.style.fontSize = '14px';
-                                row.style.lineHeight = '1.6';
-                                listContainer.appendChild(row);
+                        // 1.4 优化字体样式
+                        const table = clonedDoc.querySelector('table');
+                        if (table) {
+                            // 使用更标准的字体，确保垂直居中
+                            table.style.fontFamily = '"Microsoft YaHei", "PingFang SC", "Heiti SC", sans-serif';
+                            
+                            // 强制所有单元格垂直居中
+                            const cells = table.querySelectorAll('td, th');
+                            cells.forEach((cell: any) => {
+                                cell.style.verticalAlign = 'middle';
+                                // 微调：如果觉得偏下，可能是 line-height 或 padding 的问题
+                                // 这里尝试重置 line-height
+                                cell.style.lineHeight = '1.4';
                             });
 
-                            container.appendChild(listContainer);
+                            // 针对内容 div 进行调整
+                            const contentDivs = table.querySelectorAll('.group\\/cell'); // 对应 CellInput 内部的 div
+                            contentDivs.forEach((div: any) => {
+                                // 确保 flex 居中生效
+                                div.style.display = 'flex';
+                                div.style.alignItems = 'center';
+                                div.style.justifyContent = 'center';
+                                div.style.height = '100%';
+                                
+                                // 移除可能的额外 padding
+                                div.style.padding = '0';
+                                
+                                // 尝试通过 margin-bottom 负值来"提升"文字位置
+                                // 或者给内部的 span 加一个 transform
+                                const span = div.querySelector('span');
+                                if (span) {
+                                    span.style.position = 'relative';
+                                    span.style.top = '-2px'; // 微调：向上移动 2px (之前是 1px)
+                                    span.style.lineHeight = '1.2'; // 紧凑行高
+                                }
+                            });
                         }
 
-                        // 页脚
-                        const footer = clonedDoc.createElement('div');
-                        footer.style.marginTop = '20px';
-                        footer.style.paddingTop = '10px';
-                        footer.style.borderTop = '1px solid #eee';
-                        footer.style.textAlign = 'center';
-                        footer.style.color = '#9ca3af';
-                        footer.style.fontSize = '12px';
-                        footer.innerText = 'Powered By LaoShui @ 2025 | 学生会检查编排系统 | 舟山市六横中学';
-                        container.appendChild(footer);
+                        // 2. 添加额外内容 (备注、个人清单、页脚)
+                        const container = clonedDoc.getElementById('schedule-export-area');
+                        if (container) {
+                            // 应用宽度设置
+                            if (targetWidth === 'a4' || targetWidth === 'a4_landscape') {
+                                const width = targetWidth === 'a4' ? '794px' : '1123px';
+                                container.style.width = width;
+                                container.style.minWidth = 'unset';
+                                // 查找并调整表格
+                                const table = container.querySelector('table');
+                                if (table) {
+                                    table.style.minWidth = '100%';
+                                    table.style.width = '100%';
+                                }
+                            }
+
+                            // 2.1 备注信息 (现在放在表格后，个人清单前)
+                            if (exportRemarks && exportRemarks.trim()) {
+                                const remarksContainer = clonedDoc.createElement('div');
+                                remarksContainer.style.marginTop = '20px';
+                                remarksContainer.style.padding = '15px';
+                                remarksContainer.style.backgroundColor = '#f9fafb';
+                                remarksContainer.style.border = '1px solid #e5e7eb';
+                                remarksContainer.style.borderRadius = '6px';
+                                remarksContainer.style.textAlign = 'left';
+                                remarksContainer.style.color = '#374151';
+                                remarksContainer.style.fontSize = '14px';
+                                remarksContainer.style.lineHeight = '1.6';
+                                remarksContainer.style.whiteSpace = 'pre-wrap'; // 保留换行
+                                
+                                const remarksLabel = clonedDoc.createElement('div');
+                                remarksLabel.innerText = '备注：';
+                                remarksLabel.style.fontWeight = 'bold';
+                                remarksLabel.style.marginBottom = '5px';
+                                remarksContainer.appendChild(remarksLabel);
+                                
+                                const remarksContent = clonedDoc.createElement('div');
+                                remarksContent.innerText = exportRemarks;
+                                remarksContainer.appendChild(remarksContent);
+                                
+                                container.appendChild(remarksContainer);
+                            }
+
+                            // 2.2 个人清单 (可选)
+                            if (includePersonalList) {
+                                const listContainer = clonedDoc.createElement('div');
+                                listContainer.style.marginTop = '20px';
+                                listContainer.style.paddingTop = '20px';
+                                listContainer.style.borderTop = '2px dashed #ccc';
+                                listContainer.style.textAlign = 'left';
+                                listContainer.style.color = '#000';
+
+                                const title = clonedDoc.createElement('h2');
+                                title.innerText = '个人任务清单';
+                                title.style.fontSize = '18px';
+                                title.style.fontWeight = 'bold';
+                                title.style.marginBottom = '15px';
+                                listContainer.appendChild(title);
+
+                                const groupedData = getGroupedPersonalTasks();
+
+                                groupedData.forEach(({groupId, studentTasks, sortedStudents}) => {
+                                    // 组标题
+                                    const groupHeader = clonedDoc.createElement('h3');
+                                    groupHeader.innerText = `第 ${groupId + 1} 组`;
+                                    groupHeader.style.fontSize = '16px';
+                                    groupHeader.style.fontWeight = 'bold';
+                                    groupHeader.style.marginTop = '15px';
+                                    groupHeader.style.paddingBottom = '5px';
+                                    groupHeader.style.borderBottom = '1px solid #eee';
+                                    groupHeader.style.color = '#4b5563';
+                                    listContainer.appendChild(groupHeader);
+
+                                    let currentClass = '';
+
+                                    sortedStudents.forEach(student => {
+                                        let tasks = studentTasks[student.id] || [];
+                                        if (tasks.length === 0) return;
+
+                                        // 合并显示
+                                        // 注意：这里需要根据实际格式化的字符串进行匹配
+                                        // 格式化逻辑: `${catName}${sub}${cleanName}`
+                                        // 高一(1-3班) -> 高一（1-3班）
+                                        // 眼操上午高一 （1-3班）
+                                        const hasG1A = tasks.some(t => t.includes('高一 （1-3班）'));
+                                        const hasG1B = tasks.some(t => t.includes('高一 （4-6班）'));
+
+                                        if (hasG1A && hasG1B) {
+                                            // 移除原来的子任务
+                                            tasks = tasks.filter(t => !t.includes('高一 （1-3班）') && !t.includes('高一 （4-6班）'));
+                                            // 添加合并后的任务，保留前缀
+                                            // 假设前缀都一样（都是“眼操上午”），取第一个找到的作为模板
+                                            const template = tasks.find(t => t.includes('高一 （')) || '眼操上午高一';
+                                            // 简单替换后缀
+                                            const merged = '眼操上午高一'; // 这里简化处理，直接用最常见的情况
+                                            tasks.push(merged);
+                                        }
+
+                                        const className = formatClassName(student.grade, student.classNum);
+                                        if (className !== currentClass) {
+                                            const classHeader = clonedDoc.createElement('div');
+                                            classHeader.innerText = className;
+                                            classHeader.style.fontWeight = 'bold';
+                                            classHeader.style.marginTop = '12px';
+                                            classHeader.style.marginBottom = '4px';
+                                            classHeader.style.fontSize = '15px';
+                                            listContainer.appendChild(classHeader);
+                                            currentClass = className;
+                                        }
+
+                                        const row = clonedDoc.createElement('div');
+                                        tasks.sort();
+                                        row.innerText = `${student.name}： ${tasks.join('；')}`;
+                                        row.style.fontSize = '14px';
+                                        row.style.lineHeight = '1.6';
+                                        listContainer.appendChild(row);
+                                    });
+                                });
+
+                                container.appendChild(listContainer);
+                            }
+
+                            // 2.3 页脚
+                            const footer = clonedDoc.createElement('div');
+                            footer.style.marginTop = '20px';
+                            footer.style.paddingTop = '10px';
+                            footer.style.borderTop = '1px solid #eee';
+                            footer.style.display = 'flex';
+                            footer.style.justifyContent = 'space-between';
+                            footer.style.alignItems = 'center';
+                            footer.style.color = '#9ca3af';
+                            footer.style.fontSize = '12px';
+
+                            const powerBy = clonedDoc.createElement('span');
+                            powerBy.innerText = 'Powered By LaoShui @ 2025 | 学生会检查编排系统 | 舟山市六横中学';
+                            footer.appendChild(powerBy);
+
+                            const time = clonedDoc.createElement('span');
+                            const now = new Date();
+                            const timeStr = now.toLocaleString('zh-CN', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                                hour12: false
+                            });
+                            time.innerText = `生成时间：${timeStr}`;
+                            footer.appendChild(time);
+
+                            container.appendChild(footer);
+                        }
                     }
-                }
-            });
-            canvas.toBlob(blob => {
-                if (blob) saveAs(blob, "检查安排表.png");
-            });
-            setExportDialog({isOpen: false, type: null});
-        }
+                });
+                canvas.toBlob(blob => {
+                    if (blob) saveAs(blob, "检查安排表.png");
+                });
+                setIsExportingImage(false);
+                setExportDialog({isOpen: false, type: null});
+            } else {
+                setIsExportingImage(false);
+            }
+        }, 100);
     };
 
     const exportJSON = () => {
@@ -1027,13 +1165,14 @@ const App: React.FC = () => {
                     <div className="w-full max-w-[1400px] flex flex-col">
                         <div className="w-full bg-white shadow-lg rounded-xl h-fit min-h-[500px]">
                             <ScheduleGrid
-                                students={students}
-                                assignments={assignments}
-                                onAssign={handleAssign}
-                                onSwap={handleSwap}
-                                groupCount={groupCount}
-                                conflicts={conflicts}
-                            />
+                    students={students}
+                    assignments={assignments}
+                    onAssign={handleAssign}
+                    onSwap={handleSwap}
+                    groupCount={groupCount}
+                    conflicts={conflicts}
+                    enableMerge={isExportingImage}
+                />
                         </div>
                     </div>
                 </main>
@@ -1119,6 +1258,16 @@ const App: React.FC = () => {
                 {exportDialog.type === 'image' && (
                     <div className="mb-2">
                         <div className="mb-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">表格标题</label>
+                            <input
+                                type="text"
+                                className="w-full p-2 border border-gray-300 rounded-md text-sm focus:ring-primary focus:border-primary outline-none"
+                                value={exportTitle}
+                                onChange={(e) => setExportTitle(e.target.value)}
+                                placeholder="请输入标题"
+                            />
+                        </div>
+                        <div className="mb-4">
                             <label className="block text-sm font-medium text-gray-700 mb-2">页面宽度设置</label>
                             <div className="flex gap-2">
                                 <button
@@ -1170,6 +1319,19 @@ const App: React.FC = () => {
                                 </button>
                             ))}
                         </div>
+                    </div>
+                )}
+
+                {exportDialog.type === 'image' && (
+                    <div className="mt-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">备注信息</label>
+                        <textarea
+                            className="w-full p-2 border border-gray-300 rounded-md text-sm focus:ring-primary focus:border-primary outline-none resize-none"
+                            rows={3}
+                            placeholder="在此输入备注信息，将显示在图片底部..."
+                            value={exportRemarks}
+                            onChange={(e) => setExportRemarks(e.target.value)}
+                        />
                     </div>
                 )}
             </Modal>
