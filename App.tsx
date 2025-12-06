@@ -200,7 +200,9 @@ const App: React.FC = () => {
     <div className="flex flex-col h-screen bg-gray-50">
       <header className="bg-white border-b px-6 py-4 flex justify-between items-center shadow-sm z-10 shrink-0">
         <div className="flex items-center gap-3">
-            <div className="bg-primary text-white p-2 rounded-lg font-bold text-xl">SU</div>
+            <div className="bg-primary flex items-center justify-center rounded-lg overflow-hidden shadow-md">
+                <img src="/images/zslhzxLOGO.png" alt="Logo" className="h-10 w-auto object-contain p-1" />
+            </div>
             <h1 className="font-bold text-xl text-gray-800">学生会检查编排系统</h1>
         </div>
         
@@ -278,6 +280,10 @@ const App: React.FC = () => {
             </div>
         </main>
       </div>
+
+      <footer className="bg-white border-t py-2 px-6 text-center text-xs text-gray-400 shrink-0">
+        Powered By LaoShui @ 2025 | 舟山市六横中学
+      </footer>
 
       {toast && (
         <Toast 
