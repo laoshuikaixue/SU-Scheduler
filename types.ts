@@ -1,5 +1,5 @@
 export enum Department {
-  CHAIRMAN = '主席团', // Includes Chairman/Vice
+  CHAIRMAN = '主席团', // 包含主席/副主席
   DISCIPLINE = '纪检部',
   STUDY = '学习部',
   ART = '文宣部',
@@ -14,24 +14,33 @@ export enum TaskCategory {
   EVENING_STUDY = '晚自习',
 }
 
+export enum TimeSlot {
+  MORNING_CLEAN = '晨间打扫',
+  MORNING_EXERCISE = '上午课间',
+  EYE_AM = '上午眼操',
+  EYE_PM = '下午眼操',
+  EVENING = '晚自习',
+}
+
 export interface Student {
   id: string;
   name: string;
   department: Department;
   grade: number; // 1, 2, 3
   classNum: number; // 1-6
-  pinyinInitials?: string; // For "zs" matching
+  pinyinInitials?: string; // 用于拼音搜索
 }
 
 export interface TaskDefinition {
   id: string;
   category: TaskCategory;
-  subCategory: string; // e.g., "室外", "上午"
-  name: string; // e.g., "点位1", "高一(1-3班)"
+  subCategory: string; // 例如 "室外", "上午"
+  name: string; // 例如 "点位1", "高一(1-3班)"
+  timeSlot: TimeSlot; // 时间段，用于冲突检测
   
-  // Constraints
+  // 限制条件
   allowedDepartments: Department[];
-  forbiddenGrade?: number; // e.g., Evening study for G1 cannot be checked by G1
+  forbiddenGrade?: number; // 例如：高一不能检查高一的晚自习
   forbiddenClassGroup?: {
     grade: number;
     minClass: number;

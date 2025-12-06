@@ -5,7 +5,7 @@ import ScheduleGrid from './components/ScheduleGrid';
 import Toast from './components/Toast';
 import { MOCK_STUDENTS, ALL_TASKS } from './constants';
 import { Student, Department, TaskCategory } from './types';
-import { autoScheduleMultiGroup } from './services/scheduler';
+import { autoScheduleMultiGroup, getScheduleConflicts, getSuggestions } from './services/scheduler';
 import { formatClassName } from './utils';
 import { Download, Upload, Wand2, FileSpreadsheet, Image as ImageIcon, Users, FileText, Trash2, FileJson } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
@@ -14,6 +14,7 @@ import saveAs from 'file-saver';
 // @ts-ignore
 import { pinyin } from 'pinyin-pro';
 import Modal from './components/Modal';
+import { SuggestionsPanel } from './components/SuggestionsPanel';
 
 const App: React.FC = () => {
   const [students, setStudents] = useState<Student[]>([]);
@@ -22,6 +23,9 @@ const App: React.FC = () => {
   const [groupCount, setGroupCount] = useState(3);
   const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
   
+  const conflicts = getScheduleConflicts(students, assignments, groupCount);
+  const suggestions = getSuggestions(students, conflicts);
+
   // Export Dialog State
   const [exportDialog, setExportDialog] = useState<{ isOpen: boolean, type: 'excel' | 'image' | null }>({ isOpen: false, type: null });
   const [includePersonalList, setIncludePersonalList] = useState(false);
@@ -320,6 +324,42 @@ const App: React.FC = () => {
                     e: { r: currentRow - 1, c: 1 }
                 });
             }
+            
+            // 新增: 课间操相邻楼层如果是同一个人，合并单元格
+            if (category === TaskCategory.INTERVAL_EXERCISE && subCat === '室内') {
+                 // subTasks 是所有室内课间操任务，按楼层排序
+                 // 遍历每一组
+                 for (let g = 0; g < groupCount; g++) {
+                     const colIndex = 3 + g; // 0,1,2 是固定列，3开始是组
+                     let startRow = subStartRow;
+                     
+                     for (let i = 0; i < subTasks.length; i++) {
+                         const currentTask = subTasks[i];
+                         const currentSid = assignments[`${currentTask.id}::${g}`];
+                         
+                         // 检查下一行是否相同
+                         let span = 1;
+                         while (i + span < subTasks.length) {
+                             const nextTask = subTasks[i + span];
+                             const nextSid = assignments[`${nextTask.id}::${g}`];
+                             if (currentSid && nextSid && currentSid === nextSid) {
+                                 span++;
+                             } else {
+                                 break;
+                             }
+                         }
+                         
+                         if (span > 1) {
+                             merges.push({
+                                 s: { r: startRow + i, c: colIndex },
+                                 e: { r: startRow + i + span - 1, c: colIndex }
+                             });
+                             // 跳过已处理的行
+                             i += span - 1;
+                         }
+                     }
+                 }
+            }
         });
 
         // Merge Category Column (Col Index 0)
@@ -591,9 +631,9 @@ const App: React.FC = () => {
 
           <button 
             onClick={downloadTemplate}
-            className="text-xs text-blue-600 hover:underline mr-4"
+            className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition"
           >
-            下载模板
+            <FileSpreadsheet size={16} /> 下载模板
           </button>
           
           <input 
@@ -657,18 +697,20 @@ const App: React.FC = () => {
       <div className="flex flex-1 overflow-hidden">
         <StudentList students={students} />
 
-        {/* Removed overflow-hidden from the inner card to allow scrolling if needed, though main overflow-auto handles it. */}
         <main className="flex-1 overflow-auto bg-gray-100 p-6 flex justify-center">
             <div className="w-full max-w-[1400px] bg-white shadow-lg rounded-xl h-fit min-h-[500px]">
                 <ScheduleGrid 
-                  students={students} 
-                  assignments={assignments} 
-                  onAssign={handleAssign}
-                  onSwap={handleSwap}
-                  groupCount={groupCount}
-                />
-            </div>
+            students={students} 
+            assignments={assignments} 
+            onAssign={handleAssign}
+            onSwap={handleSwap}
+            groupCount={groupCount}
+            conflicts={conflicts}
+          />
+        </div>
         </main>
+
+        <SuggestionsPanel suggestions={suggestions} students={students} />
       </div>
 
       <footer className="bg-white border-t py-2 px-6 text-center text-xs text-gray-400 shrink-0">

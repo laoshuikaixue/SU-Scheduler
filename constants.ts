@@ -1,9 +1,9 @@
-import { Department, TaskCategory, TaskDefinition, Student } from './types';
+import { Department, TaskCategory, TaskDefinition, Student, TimeSlot } from './types';
 
-// Helper to generate IDs
+// 生成 ID 的辅助函数
 const uid = () => Math.random().toString(36).substr(2, 9);
 
-// Departments that only do Indoor Interval Exercise
+// 负责室内课间操的特殊部门
 export const SPECIAL_DEPARTMENTS = [
   Department.CHAIRMAN,
   Department.ART,
@@ -11,18 +11,18 @@ export const SPECIAL_DEPARTMENTS = [
   Department.SPORTS,
 ];
 
-// Regular Departments for Cleaning, Eye, Evening
+// 负责包干区、眼操、晚自习的常规部门
 export const REGULAR_DEPARTMENTS = [
   Department.DISCIPLINE,
   Department.STUDY,
 ];
 
-// Helper to generate mock students
+// 生成模拟学生的辅助函数
 const generateMockStudents = (): Student[] => {
   const students: Student[] = [];
-  // Weight Regular departments higher to ensure coverage for Cleaning/Eye/Evening tasks
-  // Regular: Discipline, Study
-  // Special: Chairman, Art, Clubs, Sports
+  // 增加常规部门权重以确保覆盖包干区/眼操/晚自习
+  // 常规: 纪检部, 学习部
+  // 特殊: 主席团, 文宣部, 社联部, 体育部
   const depts = [
     Department.DISCIPLINE, Department.STUDY, 
     Department.DISCIPLINE, Department.STUDY, 
@@ -37,7 +37,7 @@ const generateMockStudents = (): Student[] => {
   for (let i = 0; i < 90; i++) {
     const dept = depts[i % depts.length];
     const grade = (i % 3) + 1;
-    const classNum = (i % 10) + 1; // Classes 1-10 to reduce class conflicts
+    const classNum = (i % 10) + 1; // 1-10 班，减少班级冲突
     const surname = firstNames[i % firstNames.length];
     const name = surname + lastNames[i % lastNames.length];
     
@@ -47,13 +47,13 @@ const generateMockStudents = (): Student[] => {
       department: dept,
       grade,
       classNum,
-      pinyinInitials: '' // Populated in App.tsx
+      pinyinInitials: '' // 在 App.tsx 中填充
     });
   }
   return students;
 };
 
-// Mock Data for Template
+// 模板模拟数据
 export const MOCK_STUDENTS: Student[] = generateMockStudents();
 
 const GRADE_CN = ['', '一', '二', '三'];
@@ -65,6 +65,7 @@ export const ALL_TASKS: TaskDefinition[] = [
     category: TaskCategory.CLEANING,
     subCategory: '室外',
     name: '公共区域',
+    timeSlot: TimeSlot.MORNING_CLEAN,
     allowedDepartments: REGULAR_DEPARTMENTS,
   },
   {
@@ -72,6 +73,7 @@ export const ALL_TASKS: TaskDefinition[] = [
     category: TaskCategory.CLEANING,
     subCategory: '室内',
     name: '教学楼',
+    timeSlot: TimeSlot.MORNING_CLEAN,
     allowedDepartments: REGULAR_DEPARTMENTS,
   },
   {
@@ -79,6 +81,7 @@ export const ALL_TASKS: TaskDefinition[] = [
     category: TaskCategory.CLEANING,
     subCategory: '迟到',
     name: '点位1',
+    timeSlot: TimeSlot.MORNING_CLEAN,
     allowedDepartments: REGULAR_DEPARTMENTS,
   },
   {
@@ -86,6 +89,7 @@ export const ALL_TASKS: TaskDefinition[] = [
     category: TaskCategory.CLEANING,
     subCategory: '迟到',
     name: '点位2',
+    timeSlot: TimeSlot.MORNING_CLEAN,
     allowedDepartments: REGULAR_DEPARTMENTS,
   },
 
@@ -95,6 +99,7 @@ export const ALL_TASKS: TaskDefinition[] = [
     category: TaskCategory.INTERVAL_EXERCISE,
     subCategory: '室外',
     name: '点位1',
+    timeSlot: TimeSlot.MORNING_EXERCISE,
     allowedDepartments: REGULAR_DEPARTMENTS,
   },
   {
@@ -102,6 +107,7 @@ export const ALL_TASKS: TaskDefinition[] = [
     category: TaskCategory.INTERVAL_EXERCISE,
     subCategory: '室外',
     name: '点位2',
+    timeSlot: TimeSlot.MORNING_EXERCISE,
     allowedDepartments: REGULAR_DEPARTMENTS,
   },
   {
@@ -109,25 +115,28 @@ export const ALL_TASKS: TaskDefinition[] = [
     category: TaskCategory.INTERVAL_EXERCISE,
     subCategory: '室外',
     name: '点位3',
+    timeSlot: TimeSlot.MORNING_EXERCISE,
     allowedDepartments: REGULAR_DEPARTMENTS,
   },
-  // Indoor (Floors 1-5)
+  // 室内 (1-5楼)
   ...[1, 2, 3, 4, 5].map(floor => ({
     id: `ex-in-${floor}`,
     category: TaskCategory.INTERVAL_EXERCISE,
     subCategory: '室内',
     name: `${['', '一', '二', '三', '四', '五'][floor]}楼`,
-    allowedDepartments: [...SPECIAL_DEPARTMENTS, ...REGULAR_DEPARTMENTS],
+    timeSlot: TimeSlot.MORNING_EXERCISE,
+    allowedDepartments: SPECIAL_DEPARTMENTS, // 仅特殊部门负责室内课间操
   })),
 
   // --- 3. 眼保健操 (Eye Exercise) ---
-  // AM: G1, G2. PM: G1, G2, G3. Each has 1-3, 4-6 groups.
+  // 上午: 高一, 高二. 下午: 高一, 高二, 高三. 分为 1-3, 4-6 班组.
   ...[1, 2].flatMap(grade => [
     {
       id: `eye-am-g${grade}-a`,
       category: TaskCategory.EYE_EXERCISE,
       subCategory: '上午',
       name: `高${GRADE_CN[grade]} (1-3班)`,
+      timeSlot: TimeSlot.EYE_AM,
       allowedDepartments: REGULAR_DEPARTMENTS,
       forbiddenClassGroup: { grade, minClass: 1, maxClass: 3 }
     },
@@ -136,6 +145,7 @@ export const ALL_TASKS: TaskDefinition[] = [
       category: TaskCategory.EYE_EXERCISE,
       subCategory: '上午',
       name: `高${GRADE_CN[grade]} (4-6班)`,
+      timeSlot: TimeSlot.EYE_AM,
       allowedDepartments: REGULAR_DEPARTMENTS,
       forbiddenClassGroup: { grade, minClass: 4, maxClass: 6 }
     }
@@ -146,6 +156,7 @@ export const ALL_TASKS: TaskDefinition[] = [
       category: TaskCategory.EYE_EXERCISE,
       subCategory: '下午',
       name: `高${GRADE_CN[grade]} (1-3班)`,
+      timeSlot: TimeSlot.EYE_PM,
       allowedDepartments: REGULAR_DEPARTMENTS,
       forbiddenClassGroup: { grade, minClass: 1, maxClass: 3 }
     },
@@ -154,6 +165,7 @@ export const ALL_TASKS: TaskDefinition[] = [
       category: TaskCategory.EYE_EXERCISE,
       subCategory: '下午',
       name: `高${GRADE_CN[grade]} (4-6班)`,
+      timeSlot: TimeSlot.EYE_PM,
       allowedDepartments: REGULAR_DEPARTMENTS,
       forbiddenClassGroup: { grade, minClass: 4, maxClass: 6 }
     }
@@ -165,6 +177,7 @@ export const ALL_TASKS: TaskDefinition[] = [
     category: TaskCategory.EVENING_STUDY,
     subCategory: '晚自习',
     name: `高${GRADE_CN[grade]}`,
+    timeSlot: TimeSlot.EVENING,
     allowedDepartments: REGULAR_DEPARTMENTS,
     forbiddenGrade: grade,
   })),

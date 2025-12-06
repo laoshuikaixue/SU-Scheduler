@@ -2,8 +2,8 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { ALL_TASKS } from '../constants';
 import { Student, TaskCategory } from '../types';
-import { canAssign } from '../services/scheduler';
-import { X } from 'lucide-react';
+import { ConflictInfo, canAssign } from '../services/scheduler';
+import { X, AlertTriangle } from 'lucide-react';
 import { formatClassName } from '../utils';
 import { 
   DndContext, 
@@ -24,9 +24,10 @@ interface Props {
   onAssign: (taskId: string, groupId: number, studentId: string | null) => void;
   onSwap?: (taskId1: string, groupId1: number, taskId2: string, groupId2: number) => void;
   groupCount: number;
+  conflicts?: ConflictInfo[];
 }
 
-const ScheduleGrid: React.FC<Props> = ({ students, assignments, onAssign, onSwap, groupCount }) => {
+const ScheduleGrid: React.FC<Props> = ({ students, assignments, onAssign, onSwap, groupCount, conflicts = [] }) => {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [activeStudent, setActiveStudent] = useState<Student | null>(null);
 
@@ -155,6 +156,13 @@ const ScheduleGrid: React.FC<Props> = ({ students, assignments, onAssign, onSwap
                         const studentId = assignments[key];
                         const student = students.find(s => s.id === studentId);
                         const validation = student ? canAssign(student, task) : { valid: true };
+                        
+                        // 查找当前单元格的冲突
+                        const cellConflict = conflicts.find(c => 
+                            c.taskId === task.id && 
+                            c.groupId === g && 
+                            c.studentId === studentId
+                        );
 
                         return (
                           <CellWrapper
@@ -166,6 +174,7 @@ const ScheduleGrid: React.FC<Props> = ({ students, assignments, onAssign, onSwap
                             allStudents={students}
                             task={task}
                             groupIndex={g}
+                            conflict={cellConflict}
                           />
                         );
                       })}
@@ -202,7 +211,8 @@ const CellWrapper: React.FC<{
     allStudents: Student[];
     task: any;
     groupIndex: number;
-}> = ({ id, student, validation, onAssign, allStudents, task, groupIndex }) => {
+    conflict?: ConflictInfo;
+}> = ({ id, student, validation, onAssign, allStudents, task, groupIndex, conflict }) => {
     const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
         id: id,
         disabled: !student // Only draggable if there is a student
@@ -212,13 +222,24 @@ const CellWrapper: React.FC<{
         id: id
     });
 
+    // Determine background color based on state
+    let bgClass = 'bg-white';
+    if (isDragging) {
+        bgClass = 'opacity-30';
+    } else if (conflict) {
+        // 冲突优先显示
+        bgClass = conflict.type === 'error' ? 'bg-red-100' : 'bg-yellow-50';
+    } else if (!validation.valid) {
+        // 基础校验失败
+        bgClass = 'bg-red-50';
+    } else if (isOver) {
+        bgClass = 'bg-blue-100/50 shadow-inner';
+    }
+
     return (
         <td 
             ref={setDroppableRef}
-            className={`border border-gray-400 p-0 relative transition-all duration-200 ${
-                !validation.valid ? 'bg-red-50' : 
-                isOver ? 'bg-blue-100/50 shadow-inner' : 'bg-white'
-            } ${isDragging ? 'opacity-30' : ''}`}
+            className={`border border-gray-400 p-0 relative transition-all duration-200 ${bgClass}`}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
                 e.preventDefault();
@@ -231,8 +252,8 @@ const CellWrapper: React.FC<{
                     value={student} 
                     allStudents={allStudents}
                     onSelect={onAssign}
-                    isValid={validation.valid}
-                    validationMsg={validation.reason}
+                    isValid={!conflict && validation.valid}
+                    validationMsg={conflict ? conflict.reason : validation.reason}
                 />
             </div>
         </td>
