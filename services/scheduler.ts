@@ -763,12 +763,16 @@ export const autoScheduleMultiGroupAsync = async (
             const groupWorkload: Record<string, number> = {};
             const studentCategories: Record<string, Set<TaskCategory>> = {};
             const studentTimeSlots: Record<string, Set<TimeSlot>> = {};
+            const studentG1EyeCounts: Record<string, number> = {}; // 追踪高一上午眼操数量
+            const studentNonEyeCounts: Record<string, number> = {}; // 追踪非眼操数量
             const groupStudents = studentsPerGroup[g];
 
             groupStudents.forEach(s => {
                 groupWorkload[s.id] = 0;
                 studentCategories[s.id] = new Set();
                 studentTimeSlots[s.id] = new Set();
+                studentG1EyeCounts[s.id] = 0;
+                studentNonEyeCounts[s.id] = 0;
             });
 
             ALL_TASKS.forEach(task => {
@@ -779,6 +783,14 @@ export const autoScheduleMultiGroupAsync = async (
                         groupWorkload[sid] = (groupWorkload[sid] || 0) + 1;
                         studentCategories[sid].add(task.category);
                         studentTimeSlots[sid].add(task.timeSlot);
+                        
+                        if (task.category === TaskCategory.EYE_EXERCISE) {
+                            if (task.subCategory === '上午' && task.name.includes('高一')) {
+                                studentG1EyeCounts[sid] = (studentG1EyeCounts[sid] || 0) + 1;
+                            }
+                        } else {
+                            studentNonEyeCounts[sid] = (studentNonEyeCounts[sid] || 0) + 1;
+                        }
                     }
                 }
             });
@@ -788,7 +800,36 @@ export const autoScheduleMultiGroupAsync = async (
                 if (newAssignments[key]) continue;
 
                 let candidates = groupStudents.filter(student => {
-                    if (groupWorkload[student.id] >= 2) return false;
+                    // 计算有效负载: 高一上午眼操2个算1个
+                    let effectiveLoad = groupWorkload[student.id];
+                    if (studentG1EyeCounts[student.id] >= 2) {
+                        effectiveLoad -= 1;
+                    }
+
+                    // 预测新任务带来的负载变化
+                    let loadIncrement = 1;
+                    if (task.category === TaskCategory.EYE_EXERCISE && 
+                        task.subCategory === '上午' && 
+                        task.name.includes('高一') && 
+                        studentG1EyeCounts[student.id] >= 1) {
+                        // 已经有一个高一上午眼操，再加一个，有效负载不变 (1->1)
+                        // 注意：如果已经有2个了(不应该发生)，也不变
+                        // 简单判断：只要有至少1个，新加的这个就会合并，增量为0
+                        loadIncrement = 0;
+                    }
+                    
+                    const futureEffectiveLoad = effectiveLoad + loadIncrement;
+                    const futureNonEyeCount = studentNonEyeCounts[student.id] + (task.category !== TaskCategory.EYE_EXERCISE ? 1 : 0);
+
+                    // 允许有效负载达到 3，但必须满足：非眼操任务最多 1 个
+                    // 也就是说，(2 Eye + 1 NonEye) 或 (3 Eye) 是允许的
+                    // 但 (1 Eye + 2 NonEye) 是不允许的
+                    if (futureEffectiveLoad > 3) return false;
+                    if (futureEffectiveLoad === 3) {
+                         if (futureNonEyeCount > 1) return false;
+                    }
+                    // 如果 futureEffectiveLoad <= 2，总是允许 (除非其他互斥规则)
+
                     const isIndoorInterval = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
                     if (!isIndoorInterval && studentTimeSlots[student.id].has(task.timeSlot)) return false;
                     if (!canAssign(student, task).valid) return false;
@@ -900,8 +941,18 @@ export const autoScheduleMultiGroupAsync = async (
                 if (candidates.length === 0) continue;
 
                 candidates.sort((a, b) => {
-                    const loadA = groupWorkload[a.id];
-                    const loadB = groupWorkload[b.id];
+                    // 计算有效负载 (Effective Load)
+                    // 如果同时负责高一上午眼操的两个班 (1-3 和 4-6)，视为 1 个负载
+                    const getEffectiveLoad = (sid: string, rawLoad: number) => {
+                        let eff = rawLoad;
+                        if (studentG1EyeCounts[sid] >= 2) {
+                            eff -= 1;
+                        }
+                        return eff;
+                    };
+
+                    const loadA = getEffectiveLoad(a.id, groupWorkload[a.id]);
+                    const loadB = getEffectiveLoad(b.id, groupWorkload[b.id]);
 
                     // NEW: 高一上午眼保健操 - 强力合并偏好
                     // 只要有一方已经持有另一半任务，无视负载差异，绝对优先
@@ -920,106 +971,34 @@ export const autoScheduleMultiGroupAsync = async (
                          if (!hasA && hasB) return 1;
                     }
                     
-                    // 特殊逻辑: 对于室内课间操，如果我们希望 "一人多层"，那么应该优先分配给 "已有室内任务的人" (即 load 大的人?)
-                    // 不，全局仍然是负载均衡。
-                    // 但是，当所有人 load 都相同时，或者当进入 "一人多层" 模式 (load >= 2) 时，我们需要特殊处理。
-                    // 目前的 sort 是全局的。
-                    // 如果 task 是室内课间操:
-                    if (task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内') {
-                        const getAssignedFloors = (sid: string) => {
-                             const floors: number[] = [];
-                             // 遍历当前新分配中该学生的所有任务
-                             ALL_TASKS.forEach(t => {
-                                 const k = `${t.id}::${g}`;
-                                 if (newAssignments[k] === sid && t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内') {
-                                     const map: Record<string, number> = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5};
-                                     const floorChar = t.name.charAt(0);
-                                     if (map[floorChar]) floors.push(map[floorChar]);
-                                 }
-                             });
-                             return floors;
-                        };
-                        const floorsA = getAssignedFloors(a.id);
-                        const floorsB = getAssignedFloors(b.id);
-                        
-                        // 如果某人已经有室内任务，且是相邻的，我们希望优先给他 (即使他负载可能稍高?)
-                        // 不，负载限制是硬性的 (在 candidates 过滤里)。
-                        // 但在排序时，通常 loadA - loadB 会让 load 小的排前面。
-                        // 比如 A (load=0), B (load=1, floor=1)。
-                        // 如果分配 2楼。
-                        // 按 load: A 优先。结果 A:2, B:1。
-                        // 按 dist: A (inf), B (1)。B 优先。
-                        // 这里冲突了！
-                        // 如果我们想 "凑单"，必须打破 load 优先。
-                        // 但是打破 load 优先会导致负载不均 (A=0, B=2)。
-                        // 用户意图: "尽量把同一个年级的放在一起"。这通常意味着 "如果一个人要检查多个"，而不是 "强制一个人检查多个"。
-                        // 也就是说，"在不得不检查多个的情况下，尽量相邻"。
-                        // 或者，"为了相邻，可以牺牲一点负载均衡"?
-                        // 考虑到室内课间操只有 5 个，且通常由少数人负责。
-                        // 如果有 3 个人负责 5 个楼层。平均每人 1.6 个。
-                        // 必然有人 2 个，有人 1 个。
-                        // 我们希望 2 个的那个人拿的是相邻的。
-                        // 比如 A: 1,2; B: 3,4; C: 5.
-                        // 现在的逻辑:
-                        // 1. 分配 1楼 -> A (load=1)
-                        // 2. 分配 2楼 -> B (load=0, 优先) -> B: 2楼
-                        // 3. 分配 3楼 -> C (load=0, 优先) -> C: 3楼
-                        // 4. 分配 4楼 -> A,B,C load=1.
-                        //    dist: A(3), B(2), C(1). -> C 优先 -> C: 3,4
-                        // 5. 分配 5楼 -> A,B load=1. C load=2.
-                        //    C 排除 (假设 max=2, 且还有 A,B 可用).
-                        //    A(4), B(3). -> B 优先 -> B: 2,5
-                        // 结果: A:1, B:2,5, C:3,4.
-                        // B 的 2,5 不相邻。
-                        // 为什么 B 拿了 2楼？因为步骤 2 时 B load=0。
-                        // 如果步骤 2 时，A (load=1, dist=1) 能优于 B (load=0)，那么 A: 1,2。
-                        // 这就意味着我们要 "聚类优先于负载"。
-                        
-                        // 让我们尝试: 如果任务是室内课间操，且某人已有相邻任务，优先给他 (即使 load 高 1 个?)
-                        // 仅当 load 差距不大时 (比如差 1)。
-                        // 如果 load 差太多 (比如 A=0, B=4)，那还是给 A 吧。
-                        
-                        // 获取目标楼层
-                        const map: Record<string, number> = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5};
-                        const targetFloor = map[task.name.charAt(0)] || 0;
-                        
-                        if (targetFloor > 0) {
-                            // 计算与目标楼层的最小距离
-                            const getMinDist = (floors: number[]) => {
-                                if (floors.length === 0) return Infinity; 
-                                return Math.min(...floors.map(f => Math.abs(f - targetFloor)));
-                            };
-                            const distA = getMinDist(floorsA);
-                            const distB = getMinDist(floorsB);
-                            
-                            // 如果有人是 "相邻" (dist=1)，且负载只比对方高 1 (或者更少)，优先给他?
-                            // 比如 A (load=1, dist=1), B (load=0, dist=inf).
-                            // 正常 loadA > loadB -> return 1 (B优先).
-                            // 我们想 return -1 (A优先).
-                            
-                            if (distA === 1 && distB !== 1) {
-                                // A 是相邻的，B 不是
-                                // 允许 A 插队，如果 A 的负载不超过 B太多 (比如 loadA <= loadB + 1)
-                                if (loadA <= loadB + 1) return -1;
-                            }
-                            if (distB === 1 && distA !== 1) {
-                                if (loadB <= loadA + 1) return 1;
-                            }
-                        }
-                    }
-
+                    // 1. 负载均衡 (使用有效负载)
                     if (loadA !== loadB) return loadA - loadB;
 
-                    // 1. 包干区偏好: 高二 > 高三 > 高一
-                    if (task.category === TaskCategory.CLEANING) {
-                        // 如果是 "迟到" 检查，也算作包干区的一种，同样优先高二
-                        // 逻辑保持一致
-                        if (a.grade === 2 && b.grade !== 2) return -1;
-                        if (b.grade === 2 && a.grade !== 2) return 1;
+                    // 2. 年级偏好 (User Request)
+                    // 优先让高三检查课间操室外和晚自习
+                    if ((task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室外') || 
+                        task.category === TaskCategory.EVENING_STUDY) {
+                        // 高三优先
                         if (a.grade === 3 && b.grade !== 3) return -1;
                         if (b.grade === 3 && a.grade !== 3) return 1;
+                        // 其次高二
+                        if (a.grade === 2 && b.grade !== 2) return -1;
+                        if (b.grade === 2 && a.grade !== 2) return 1;
                     }
 
+                    // 高二检查包干区，非必要不要让高三检查包干区
+                    if (task.category === TaskCategory.CLEANING) {
+                        // 高二优先
+                        if (a.grade === 2 && b.grade !== 2) return -1;
+                        if (b.grade === 2 && a.grade !== 2) return 1;
+                        
+                        // 避免高三 (即 高一 > 高三)
+                        // 如果都不是高二 (e.g. 1 vs 3)
+                        if (a.grade !== 3 && b.grade === 3) return -1; // a(1) 优于 b(3)
+                        if (b.grade !== 3 && a.grade === 3) return 1;
+                    }
+                    
+                    // 3. 眼操偏好: 已经有包干区的人优先 (凑单?) - 旧逻辑
                     if (task.category === TaskCategory.EYE_EXERCISE) {
                         const hasCleanA = studentCategories[a.id].has(TaskCategory.CLEANING);
                         const hasCleanB = studentCategories[b.id].has(TaskCategory.CLEANING);
@@ -1027,7 +1006,7 @@ export const autoScheduleMultiGroupAsync = async (
                         if (!hasCleanA && hasCleanB) return 1;
                     }
 
-                    // 3. 室内课间操偏好: 优先分配给已经负责了相邻楼层的人 (减少移动)
+                    // 4. 室内课间操偏好: 优先分配给已经负责了相邻楼层的人 (减少移动)
                     // 注意: 这里假设楼层体现在 task.name 中，如 "一楼", "二楼"
                     if (task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内') {
                         const getAssignedFloors = (sid: string) => {
@@ -1088,6 +1067,14 @@ export const autoScheduleMultiGroupAsync = async (
                 groupWorkload[bestCandidate.id]++;
                 studentCategories[bestCandidate.id].add(task.category);
                 studentTimeSlots[bestCandidate.id].add(task.timeSlot);
+
+                if (task.category === TaskCategory.EYE_EXERCISE) {
+                    if (task.subCategory === '上午' && task.name.includes('高一')) {
+                        studentG1EyeCounts[bestCandidate.id]++;
+                    }
+                } else {
+                    studentNonEyeCounts[bestCandidate.id]++;
+                }
             }
         }
 
@@ -1234,15 +1221,34 @@ export const getScheduleConflicts = (
             // 规则: 负载限制 (> 2)
             // 特殊豁免: 如果任务数为3，且其中包含至少2个眼操任务，则允许 (视为轻负载)
             const eyeExerciseCount = tasks.filter(t => t.task.category === TaskCategory.EYE_EXERCISE).length;
-            const isEyeOverloadException = tasks.length === 3 && eyeExerciseCount >= 2;
+            const nonEyeCount = tasks.length - eyeExerciseCount;
+            // NEW: 如果任务数为4，但其中包含高一上午眼操合并(2个) + 下午眼操(1个) + 包干(1个)，则允许。
+            // 实际上，只要非眼操任务 <= 1，且总任务数 <= 4 (考虑到高一合并占2个)，或者总有效任务数 <= 3
+            // 简单点：允许 1个非眼操 + 任意数量眼操(只要时间不冲突)？不，还是限制一下。
+            // 目前允许:
+            // 1. (Length <= 2)
+            // 2. (Length == 3 && Eye >= 2) -> (1 NonEye + 2 Eye) or (3 Eye)
+            // 3. NEW: (Length == 4 && Eye >= 3 && G1MergeExists) -> (1 NonEye + 3 Eye(Effective 2) = Effective 3)
+            
+            // 让我们计算有效负载
+            let effectiveCount = tasks.length;
+            const g1EyeTasks = tasks.filter(t => t.task.category === TaskCategory.EYE_EXERCISE && t.task.subCategory === '上午' && t.task.name.includes('高一'));
+            if (g1EyeTasks.length >= 2) effectiveCount -= 1;
+            
+            // 判定逻辑:
+            // 1. Effective <= 2: OK
+            // 2. Effective == 3: OK IF NonEye <= 1
+            // 3. Effective > 3: NO
+            
+            const isValidLoad = effectiveCount <= 2 || (effectiveCount === 3 && nonEyeCount <= 1);
 
-            if (tasks.length > 2 && !isEyeOverloadException) {
+            if (!isValidLoad) {
                 tasks.forEach(t => {
                     conflicts.push({
                         taskId: t.id,
                         groupId,
                         studentId,
-                        reason: `任务过多 (${tasks.length})`,
+                        reason: `任务过多 (Eff:${effectiveCount}, Raw:${tasks.length})`,
                         type: 'error'
                     });
                 });
