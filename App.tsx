@@ -25,7 +25,8 @@ import {
     Undo2,
     Upload,
     Users,
-    Wand2
+    Wand2,
+    ArrowLeftRight
 } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import html2canvas from 'html2canvas';
@@ -34,6 +35,8 @@ import saveAs from 'file-saver';
 import {pinyin} from 'pinyin-pro';
 import Modal from './components/Modal';
 import {SuggestionsPanel} from './components/SuggestionsPanel';
+import SwapModal from './components/SwapModal';
+import { SwapProposal } from './services/swapService';
 
 const App: React.FC = () => {
     const [students, setStudents] = useState<Student[]>([]);
@@ -51,6 +54,7 @@ const App: React.FC = () => {
     const [logs, setLogs] = useState<string[]>([]);
     const [stats, setStats] = useState<CalculationStats | undefined>(undefined);
     const [isCalculating, setIsCalculating] = useState(false);
+    const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
 
     const conflicts = getScheduleConflicts(students, assignments, groupCount);
     const suggestions = getSuggestions(students, conflicts, assignments);
@@ -196,6 +200,44 @@ const App: React.FC = () => {
         }
 
         pushHistory(next);
+    };
+
+    const handleSmartSwap = (
+        proposal: SwapProposal,
+        studentId: string,
+        originalTaskId: string | null,
+        originalGroupId: number | null
+    ) => {
+        const next = { ...assignments };
+        const targetKey = `${proposal.targetTaskId}::${proposal.targetGroupId}`;
+
+        // 1. Remove student from original slot (if any)
+        if (originalTaskId && originalGroupId !== null) {
+            const originalKey = `${originalTaskId}::${originalGroupId}`;
+            // Double check it's still them (should be)
+            if (next[originalKey] === studentId) {
+                delete next[originalKey];
+            }
+        }
+
+        // 2. Handle the target slot
+        if (proposal.type === 'MOVE_TO_EMPTY') {
+            // Simply assign student to target
+            next[targetKey] = studentId;
+        } else if (proposal.type === 'DIRECT_SWAP') {
+            const targetStudentId = proposal.targetStudentId;
+            // Assign student to target
+            next[targetKey] = studentId;
+            
+            // Assign targetStudent to original slot (if exists)
+            if (targetStudentId && originalTaskId && originalGroupId !== null) {
+                const originalKey = `${originalTaskId}::${originalGroupId}`;
+                next[originalKey] = targetStudentId;
+            }
+        }
+
+        pushHistory(next);
+        showToast('调换成功');
     };
 
     const handleAutoSchedule = async () => {
@@ -854,6 +896,13 @@ const App: React.FC = () => {
                         <Sparkles size={16}/> 自动补全
                     </button>
 
+                    <button
+                        onClick={() => setIsSwapModalOpen(true)}
+                        className="flex items-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm transition shadow-sm"
+                    >
+                        <ArrowLeftRight size={16}/> 期望调换
+                    </button>
+
                     <div className="h-6 w-px bg-gray-300 mx-2"></div>
 
                     <div className="flex bg-gray-100 rounded-md p-1">
@@ -928,6 +977,19 @@ const App: React.FC = () => {
                     onClose={() => setToast(null)}
                 />
             )}
+
+            <SwapModal
+                isOpen={isSwapModalOpen}
+                onClose={() => setIsSwapModalOpen(false)}
+                students={students}
+                scheduleState={{ students, assignments }}
+                numGroups={groupCount}
+                onApplySwap={handleSmartSwap}
+                onGlobalReschedule={(newAssignments) => {
+                    pushHistory(newAssignments);
+                    showToast('许愿重排成功');
+                }}
+            />
 
             <Modal
                 isOpen={exportDialog.isOpen}

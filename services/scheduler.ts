@@ -131,7 +131,7 @@ export const checkGroupAvailability = (
         // 除非: 现有任务是 眼操AM + 眼操PM (2) -> 再加? 不行
 
 
-        // NEW: 如果是室内课间操，且已有任务全是室内课间操，允许负载更高
+        // 如果是室内课间操，且已有任务全是室内课间操，允许负载更高
         // 室内课间操无视时间冲突，且通常由特殊部门负责，可能人少楼层多
         const isIndoorTask = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
         if (isIndoorTask) {
@@ -144,7 +144,7 @@ export const checkGroupAvailability = (
               }
          }
 
-         // NEW: 眼保健操合并 (高一上午)
+         // 眼保健操合并 (高一上午)
          // 允许一人检查多个班级 (如 1-3班 + 4-6班)
          // 此时负载可能是 2 (仅眼操) 或 3 (眼操 + 包干区)
          if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
@@ -176,7 +176,7 @@ export const checkGroupAvailability = (
             const isAssignedIndoor = assignedTask.category === TaskCategory.INTERVAL_EXERCISE && assignedTask.subCategory === '室内';
             if (isAssignedIndoor) continue;
 
-            // NEW: 上午眼操同时检查高一两个班不视为时间冲突 (视为合并)
+            // 上午眼操同时检查高一两个班不视为时间冲突 (视为合并)
             const isTaskG1Eye = task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一');
             const isAssignedG1Eye = assignedTask.category === TaskCategory.EYE_EXERCISE && assignedTask.subCategory === '上午' && assignedTask.name.includes('高一');
             if (isTaskG1Eye && isAssignedG1Eye) continue; // 允许同时接两个高一眼操
@@ -337,11 +337,11 @@ const calculateEnergy = (
             tasks.forEach(t => {
                 if (t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内') return;
                 
-                // NEW: 高一上午眼操合并豁免
+                // 高一上午眼操合并豁免
                 // 如果是高一上午眼操，我们用特殊标记来代替时间槽，从而避免冲突
                 let slot = t.timeSlot;
                 if (t.category === TaskCategory.EYE_EXERCISE && t.subCategory === '上午' && t.name.includes('高一')) {
-                    slot = 'EYE_AM_G1_MERGED'; // 将两个班的任务视为同一时间槽（但这里 set.add 会导致第二次也被添加？）
+                    slot = <TimeSlot>'EYE_AM_G1_MERGED'; // 将两个班的任务视为同一时间槽（但这里 set.add 会导致第二次也被添加？）
                     // 不，如果用同一个 slot 字符串， set.has 会返回 true，导致冲突。
                     // 这里的逻辑是：如果 t1 和 t2 都是 高一上午眼操，它们应该兼容。
                     // 原始逻辑：t1 (slot=A), t2 (slot=A) -> 冲突。
@@ -605,10 +605,10 @@ export const autoScheduleMultiGroup = (
                         // 仍然保持大项目互斥
                         if (hasCleaning && hasEvening) return false; // 理论上不应发生，但防御性检查
 
-                        // NEW: 严格限制 - 如果已经有晚自习，不能再加任务（晚自习通常比较重）
+                        // 严格限制 - 如果已经有晚自习，不能再加任务（晚自习通常比较重）
                         if (hasEvening) return false;
 
-                        // NEW: 严格限制 - 如果已经有2个任务，且其中没有眼操，说明是 "包干+其他"，再加就是3个
+                        // 严格限制 - 如果已经有2个任务，且其中没有眼操，说明是 "包干+其他"，再加就是3个
                         // 我们希望只有在 "包干+眼操" 的基础上再加 "眼操"
                         // 或者 "眼操+眼操" -> "眼操+眼操+眼操" (理论上)
                         // 防止 "包干+晚自习"(已互斥) 或 "包干+课间操" -> 加眼操变3个 (1个眼操) -> 冲突
@@ -706,7 +706,7 @@ export const autoScheduleMultiGroup = (
 
 export interface CalculationStats {
     attempt: number;
-    maxAttempts: number; // 新增：最大尝试次数
+    maxAttempts: number;
     coverage: number;
     totalSlots: number;
     variance: number;
@@ -856,7 +856,7 @@ export const autoScheduleMultiGroupAsync = async (
                     });
                 }
 
-                // NEW: 强力重试 - 允许时间冲突 (合并眼操 - 高一上午)
+                // 强力重试 - 允许时间冲突 (合并眼操 - 高一上午)
                 // 如果找不到人，允许已经有眼操任务的人再接一个 (即合并 1-3 和 4-6)
                 if (candidates.length === 0 && task.category === TaskCategory.EYE_EXERCISE && 
                     task.subCategory === '上午' && task.name.includes('高一')) {
@@ -890,7 +890,7 @@ export const autoScheduleMultiGroupAsync = async (
                     });
                 }
 
-                // NEW: 如果是室内课间操，且没找到人，允许一人多楼层 (负载 < 5)
+                // 如果是室内课间操，且没找到人，允许一人多楼层 (负载 < 5)
                 if (candidates.length === 0 && task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内') {
                     candidates = groupStudents.filter(student => {
                         // 允许负载更高，但仅限同类任务叠加
@@ -908,7 +908,7 @@ export const autoScheduleMultiGroupAsync = async (
                     });
                 }
 
-                // NEW: 高一上午眼保健操 - 默认尝试合并
+                // 高一上午眼保健操 - 默认尝试合并
                 // 即使能找到空闲的人，也优先把 1-3 和 4-6 捆绑给同一个人
                 if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
                      // 检查是否有人已经有另一半任务
@@ -954,7 +954,7 @@ export const autoScheduleMultiGroupAsync = async (
                     const loadA = getEffectiveLoad(a.id, groupWorkload[a.id]);
                     const loadB = getEffectiveLoad(b.id, groupWorkload[b.id]);
 
-                    // NEW: 高一上午眼保健操 - 强力合并偏好
+                    // 高一上午眼保健操 - 强力合并偏好
                     // 只要有一方已经持有另一半任务，无视负载差异，绝对优先
                     if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
                          const hasOtherHalf = (sid: string) => {
@@ -1222,13 +1222,13 @@ export const getScheduleConflicts = (
             // 特殊豁免: 如果任务数为3，且其中包含至少2个眼操任务，则允许 (视为轻负载)
             const eyeExerciseCount = tasks.filter(t => t.task.category === TaskCategory.EYE_EXERCISE).length;
             const nonEyeCount = tasks.length - eyeExerciseCount;
-            // NEW: 如果任务数为4，但其中包含高一上午眼操合并(2个) + 下午眼操(1个) + 包干(1个)，则允许。
+            // 如果任务数为4，但其中包含高一上午眼操合并(2个) + 下午眼操(1个) + 包干(1个)，则允许。
             // 实际上，只要非眼操任务 <= 1，且总任务数 <= 4 (考虑到高一合并占2个)，或者总有效任务数 <= 3
             // 简单点：允许 1个非眼操 + 任意数量眼操(只要时间不冲突)？不，还是限制一下。
             // 目前允许:
             // 1. (Length <= 2)
             // 2. (Length == 3 && Eye >= 2) -> (1 NonEye + 2 Eye) or (3 Eye)
-            // 3. NEW: (Length == 4 && Eye >= 3 && G1MergeExists) -> (1 NonEye + 3 Eye(Effective 2) = Effective 3)
+            // 3. (Length == 4 && Eye >= 3 && G1MergeExists) -> (1 NonEye + 3 Eye(Effective 2) = Effective 3)
             
             // 让我们计算有效负载
             let effectiveCount = tasks.length;
@@ -1270,7 +1270,7 @@ export const getScheduleConflicts = (
 
             timeSlotCounts.forEach((taskIds, slot) => {
                 if (taskIds.length > 1) {
-                    // NEW: 高一上午眼操合并豁免
+                    // 高一上午眼操合并豁免
                     if (slot === TimeSlot.EYE_AM) {
                         const allTasksAreG1Eye = taskIds.every(tid => {
                             const t = ALL_TASKS.find(x => x.id === tid);
