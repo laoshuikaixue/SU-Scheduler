@@ -104,11 +104,35 @@ export const checkGroupAvailability = (
 
 // 辅助函数: 将学生均匀分配到各组
 // 增加随机性以确保每次结果不同
-const distributeStudentsToGroups = (students: Student[], numGroups: number): Student[][] => {
+// 增加 lockedAssignments 参数，确保已手动分配的学生被锁定在特定组，不参与其他组的分配
+const distributeStudentsToGroups = (
+    students: Student[], 
+    numGroups: number,
+    lockedAssignments: Map<string, Set<number>>
+): Student[][] => {
   const groups: Student[][] = Array.from({ length: numGroups }, () => []);
   
-  // 先打乱学生顺序
-  const shuffledStudents = [...students].sort(() => Math.random() - 0.5);
+  // 1. 处理已锁定（手动分配）的学生
+  // 记录已被锁定的学生ID，避免重复分配到其他组
+  const lockedStudentIds = new Set<string>();
+  
+  lockedAssignments.forEach((gIds, sId) => {
+      const student = students.find(s => s.id === sId);
+      if (student) {
+          lockedStudentIds.add(sId);
+          gIds.forEach(gId => {
+              if (gId >= 0 && gId < numGroups) {
+                  groups[gId].push(student);
+              }
+          });
+      }
+  });
+  
+  // 2. 筛选出未分配的学生 (完全自由的学生)
+  const availableStudents = students.filter(s => !lockedStudentIds.has(s.id));
+  
+  // 3. 打乱未分配学生
+  const shuffledStudents = [...availableStudents].sort(() => Math.random() - 0.5);
   
   // 分离特殊部门和常规部门
   const specialStudents: Student[] = [];
@@ -122,14 +146,16 @@ const distributeStudentsToGroups = (students: Student[], numGroups: number): Stu
       }
   });
 
-  // 1. 特殊部门 (SPECIAL_DEPARTMENTS) 分配
+  // 4. 特殊部门 (SPECIAL_DEPARTMENTS) 分配
   // 特殊部门只负责室内课间操，无年级限制，所以直接均匀分配即可
   // 必须保证每组分到足够数量的特殊部门成员 (室内课间操有5个岗位)
+  let groupOffset = Math.floor(Math.random() * numGroups);
+  
   specialStudents.forEach((s, idx) => {
-      groups[idx % numGroups].push(s);
+      groups[(idx + groupOffset) % numGroups].push(s);
   });
 
-  // 2. 常规部门 (REGULAR_DEPARTMENTS) 分配
+  // 5. 常规部门 (REGULAR_DEPARTMENTS) 分配
   // 常规部门负责晚自习等，有严格的年级避嫌要求，必须按 年级+部门 细分
   const bucketMap: Record<string, Student[]> = {};
   regularStudents.forEach(s => {
@@ -141,7 +167,7 @@ const distributeStudentsToGroups = (students: Student[], numGroups: number): Stu
   // 轮询分配各 Bucket 成员到组
   // 为了避免所有 Bucket 都从 Group 0 开始填充导致前几组人数偏多
   // 我们使用一个全局计数器或者随机起始偏移
-  let groupOffset = Math.floor(Math.random() * numGroups);
+  groupOffset = (groupOffset + 1) % numGroups;
 
   Object.values(bucketMap).forEach(bucketStudents => {
       bucketStudents.forEach((s, idx) => {
@@ -164,12 +190,21 @@ export const autoScheduleMultiGroup = (
   const totalSlots = ALL_TASKS.length * numGroups;
   const MAX_RETRIES = 20; // 增加重试次数以应对复杂的约束组合
 
+  // 预处理锁定信息: studentId -> Set<groupId>
+  const lockedAssignments = new Map<string, Set<number>>();
+  Object.entries(currentAssignments).forEach(([key, sId]) => {
+      const [_, gStr] = key.split('::');
+      const gId = parseInt(gStr);
+      if (!lockedAssignments.has(sId)) lockedAssignments.set(sId, new Set());
+      lockedAssignments.get(sId)!.add(gId);
+  });
+
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
       // 复制当前分配（通常为空，因为是重新编排）
       const newAssignments = { ...currentAssignments };
       
-      // 将学生分配到不重叠的组池中
-      const studentsPerGroup = distributeStudentsToGroups(students, numGroups);
+      // 将学生分配到不重叠的组池中 (考虑已锁定的学生)
+      const studentsPerGroup = distributeStudentsToGroups(students, numGroups, lockedAssignments);
 
       // 任务排序策略
       const sortedTasks = [...ALL_TASKS].sort((a, b) => {
@@ -276,7 +311,13 @@ export const autoScheduleMultiGroup = (
                     // NEW: 严格限制 - 如果已经有2个任务，且其中没有眼操，说明是 "包干+其他"，再加就是3个
                     // 我们希望只有在 "包干+眼操" 的基础上再加 "眼操"
                     // 或者 "眼操+眼操" -> "眼操+眼操+眼操" (理论上)
-                    // 防止 "包干+晚自习"(已互斥)
+                    // 防止 "包干+晚自习"(已互斥) 或 "包干+课间操" -> 加眼操变3个 (1个眼操) -> 冲突
+                    
+                    // 规则: 如果已经是2个任务，必须保证其中至少有一个是眼操
+                    // 这样加上当前的眼操后，总共3个任务中至少有2个眼操，符合豁免条件
+                    if (groupWorkload[student.id] === 2 && !studentCategories[student.id].has(TaskCategory.EYE_EXERCISE)) {
+                        return false;
+                    }
                     
                     // 检查当前负载
                     // 如果已经 >= 3，绝对不行

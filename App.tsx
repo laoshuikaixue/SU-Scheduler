@@ -1,4 +1,3 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import StudentList from './components/StudentList';
 import ScheduleGrid from './components/ScheduleGrid';
@@ -7,7 +6,7 @@ import { MOCK_STUDENTS, ALL_TASKS } from './constants';
 import { Student, Department, TaskCategory } from './types';
 import { autoScheduleMultiGroup, getScheduleConflicts, getSuggestions, ConflictInfo } from './services/scheduler';
 import { formatClassName } from './utils';
-import { Download, Upload, Wand2, FileSpreadsheet, Image as ImageIcon, Users, FileText, Trash2, FileJson } from 'lucide-react';
+import { Download, Upload, Wand2, FileSpreadsheet, Image as ImageIcon, Users, FileText, Trash2, FileJson, Undo2, Redo2, Sparkles } from 'lucide-react';
 import * as XLSX from 'xlsx-js-style';
 import html2canvas from 'html2canvas';
 import saveAs from 'file-saver';
@@ -20,6 +19,10 @@ const App: React.FC = () => {
   const [students, setStudents] = useState<Student[]>([]);
   // Assignments key is `${taskId}::${groupIndex}`
   const [assignments, setAssignments] = useState<Record<string, string>>({});
+  // History for Undo/Redo
+  const [history, setHistory] = useState<Record<string, string>[]>([{}]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+
   const [groupCount, setGroupCount] = useState(3);
   const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
   
@@ -40,6 +43,31 @@ const App: React.FC = () => {
     setToast({ message, type });
   };
 
+  // Helper to push new state to history
+  const pushHistory = (newAssignments: Record<string, string>) => {
+    const newHistory = history.slice(0, historyIndex + 1);
+    newHistory.push(newAssignments);
+    setHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+    setAssignments(newAssignments);
+  };
+
+  const handleUndo = () => {
+    if (historyIndex > 0) {
+      const newIndex = historyIndex - 1;
+      setHistoryIndex(newIndex);
+      setAssignments(history[newIndex]);
+    }
+  };
+
+  const handleRedo = () => {
+    if (historyIndex < history.length - 1) {
+      const newIndex = historyIndex + 1;
+      setHistoryIndex(newIndex);
+      setAssignments(history[newIndex]);
+    }
+  };
+
   const handleJSONImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -54,7 +82,9 @@ const App: React.FC = () => {
             setStudents(data.students);
         }
         if (data.assignments) {
-            setAssignments(data.assignments);
+            // Importing assignments resets history or adds to it?
+            // Let's treat import as a new action
+            pushHistory(data.assignments);
         }
         if (data.groupCount) {
             setGroupCount(data.groupCount);
@@ -72,7 +102,7 @@ const App: React.FC = () => {
   };
 
   const performClear = () => {
-    setAssignments({});
+    pushHistory({});
     if (clearDialog.clearStudents) {
         setStudents([]);
     }
@@ -91,50 +121,54 @@ const App: React.FC = () => {
 
   const handleAssign = (taskId: string, groupId: number, studentId: string | null) => {
     const key = `${taskId}::${groupId}`;
-    setAssignments(prev => {
-      const next = { ...prev };
-      if (studentId === null) {
-        delete next[key];
-      } else {
-        next[key] = studentId;
-      }
-      return next;
-    });
+    const next = { ...assignments };
+    if (studentId === null) {
+      delete next[key];
+    } else {
+      next[key] = studentId;
+    }
+    pushHistory(next);
   };
 
   const handleSwap = (taskId1: string, groupId1: number, taskId2: string, groupId2: number) => {
     const key1 = `${taskId1}::${groupId1}`;
     const key2 = `${taskId2}::${groupId2}`;
     
-    setAssignments(prev => {
-      const next = { ...prev };
-      const val1 = next[key1];
-      const val2 = next[key2];
+    const next = { ...assignments };
+    const val1 = next[key1];
+    const val2 = next[key2];
 
-      if (val2 === undefined) {
-        delete next[key1];
-      } else {
-        next[key1] = val2;
-      }
+    if (val2 === undefined) {
+      delete next[key1];
+    } else {
+      next[key1] = val2;
+    }
 
-      if (val1 === undefined) {
-        delete next[key2];
-      } else {
-        next[key2] = val1;
-      }
-      
-      return next;
-    });
+    if (val1 === undefined) {
+      delete next[key2];
+    } else {
+      next[key2] = val1;
+    }
+    
+    pushHistory(next);
   };
 
   const handleAutoSchedule = () => {
     // Schedule N groups - Pass empty object to force fresh calculation
     const newSchedule = autoScheduleMultiGroup(students, {}, groupCount);
-    setAssignments(newSchedule);
+    pushHistory(newSchedule);
     showToast(`${groupCount}组自动编排完成！`);
   };
 
+  const handleAutoComplete = () => {
+    // Pass current assignments to fill empty slots
+    const newSchedule = autoScheduleMultiGroup(students, assignments, groupCount);
+    pushHistory(newSchedule);
+    showToast(`${groupCount}组自动补全完成！`);
+  };
+
   const handleApplySuggestion = (conflict: ConflictInfo, suggestedStudentId: string) => {
+    // handleAssign calls pushHistory, so we can reuse it
     handleAssign(conflict.taskId, conflict.groupId, suggestedStudentId);
     showToast('已应用建议修改');
   };
@@ -187,7 +221,7 @@ const App: React.FC = () => {
       });
 
       setStudents(newStudents);
-      setAssignments({}); 
+      pushHistory({}); 
       showToast(`成功导入 ${newStudents.length} 人`);
     };
     reader.readAsBinaryString(file);
@@ -620,6 +654,16 @@ const App: React.FC = () => {
         </div>
         
         <div className="flex items-center gap-3">
+          {/* Undo/Redo Controls */}
+          <div className="flex items-center gap-1 mr-2 border-r pr-2 border-gray-300">
+            <button onClick={handleUndo} disabled={historyIndex <= 0} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition" title="撤销">
+                <Undo2 size={18} />
+            </button>
+            <button onClick={handleRedo} disabled={historyIndex >= history.length - 1} className="p-2 hover:bg-gray-100 rounded text-gray-600 disabled:opacity-30 transition" title="重做">
+                <Redo2 size={18} />
+            </button>
+          </div>
+
           <div className="flex items-center gap-2 mr-4 bg-gray-50 px-2 py-1 rounded border">
             <Users size={16} className="text-gray-500"/>
             <span className="text-sm text-gray-600">组数:</span>
@@ -674,6 +718,13 @@ const App: React.FC = () => {
             className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-blue-600 text-white rounded-md text-sm transition shadow-sm"
           >
             <Wand2 size={16} /> 智能编排
+          </button>
+
+          <button 
+            onClick={handleAutoComplete}
+            className="flex items-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md text-sm transition shadow-sm"
+          >
+            <Sparkles size={16} /> 自动补全
           </button>
 
           <div className="h-6 w-px bg-gray-300 mx-2"></div>
