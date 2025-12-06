@@ -71,11 +71,89 @@ export const checkGroupAvailability = (
     // 3. 检查负载 (Max 2)
     // 特殊情况: 眼操可以允许超载 (>=3) 如果其他条件允许，但此处我们做严格建议，除非是手动分配
     // 用户反馈 "推荐人会导致冲突"，所以这里应该严格一点
-    if (assignedTaskIds.length >= 2) {
+
+    // 计算有效负载 (Effective Load)
+    // 高一上午眼操合并: 如果同时负责两个高一班级，视为一个任务
+    let effectiveLoad = assignedTaskIds.length;
+    const g1EyeTasks = assignedTaskIds.map(tid => ALL_TASKS.find(t => t.id === tid)!)
+        .filter(t => t && t.category === TaskCategory.EYE_EXERCISE && t.subCategory === '上午' && t.name.includes('高一'));
+    
+    // 如果已经分配了任务中包含高一两个班的眼操，减去一个负载
+    // 注意: 这里简化判断，只要有 >=2 个高一眼操，就减 1 (目前高一只有2个班的任务 1-3 和 4-6)
+    if (g1EyeTasks.length >= 2) {
+        effectiveLoad -= 1;
+    }
+
+    // 如果当前要分配的任务是高一上午眼操，且已分配任务里也有高一上午眼操，那么添加这个任务不应增加有效负载
+    // (即 1 -> 1, 实际上是 1+1=2 -> 1)
+    // 但这里 effectiveLoad 是基于 assignedTaskIds 的。
+    // 我们需要判断 "添加当前 task 后" 的有效负载。
+    // 简单点：检查 assignedTaskIds.length >= 2 (原始逻辑)
+    // 改为检查 effectiveLoad >= 2
+    
+    // 但是要注意，如果 current task 是 "第2个高一眼操"，那么添加它之后，总数+1，但有效负载不变。
+    // 所以:
+    // Case 1: Has 1 G1 Eye. Add G1 Eye. (Eff: 1 -> 1). Allowed.
+    // Case 2: Has 1 G1 Eye. Add Cleaning. (Eff: 1 -> 2). Allowed.
+    // Case 3: Has 2 G1 Eyes (Eff: 1). Add Cleaning. (Eff: 1 -> 2). Allowed.
+    // Case 4: Has 1 G1 Eye + 1 Cleaning (Eff: 2). Add G1 Eye. (Eff: 2 -> 2). Allowed?
+    //         New set: G1, Clean, G1 -> G1, G1, Clean -> Eff: 1 + 1 = 2. Allowed.
+
+    // 所以我们需要预测添加后的有效负载
+    let newEffectiveLoad = effectiveLoad;
+    const isTaskG1Eye = task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一');
+    
+    if (isTaskG1Eye) {
+        // 如果新任务是 G1 Eye
+        // 检查已有任务里是否有 G1 Eye
+        if (g1EyeTasks.length > 0) {
+            // 已经有一个了，再加一个，变成两个。有效负载增加 0 (从 1 变 1)
+            // (1个G1: load=1. 2个G1: load=1)
+            // 所以 newEffectiveLoad = effectiveLoad (which is currently calculated based on assigned only)
+            // Wait. 
+            // If assigned has 1 G1 (load=1). Add G1. Result 2 G1 (load=1). Delta = 0.
+            // So newEffectiveLoad = effectiveLoad.
+            
+            // If assigned has 1 G1 + 1 Other (load=2). Add G1. Result 2 G1 + 1 Other (load=2). Delta = 0.
+            // So newEffectiveLoad = effectiveLoad.
+        } else {
+            // 没有 G1 Eye. 加一个. Load + 1.
+            newEffectiveLoad += 1;
+        }
+    } else {
+        // 新任务不是 G1 Eye. Load + 1.
+        newEffectiveLoad += 1;
+    }
+
+    if (newEffectiveLoad > 2) {
         // 检查是否允许例外: 已有包干区(1) + 申请眼操(1) -> 允许 -> 2
         // 如果已经是2了，再加就是3，一般不允许
         // 除非: 现有任务是 眼操AM + 眼操PM (2) -> 再加? 不行
-        return {valid: false, reason: '负载已满'};
+
+
+        // NEW: 如果是室内课间操，且已有任务全是室内课间操，允许负载更高
+        // 室内课间操无视时间冲突，且通常由特殊部门负责，可能人少楼层多
+        const isIndoorTask = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
+        if (isIndoorTask) {
+             const allIndoor = assignedTaskIds.every(tid => {
+                 const t = ALL_TASKS.find(x => x.id === tid);
+                 return t && t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内';
+             });
+             if (allIndoor && assignedTaskIds.length < 5) { // 最多允许5层楼
+                  return {valid: true}; // 允许
+              }
+         }
+
+         // NEW: 眼保健操合并 (高一上午)
+         // 允许一人检查多个班级 (如 1-3班 + 4-6班)
+         // 此时负载可能是 2 (仅眼操) 或 3 (眼操 + 包干区)
+         if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
+             if (assignedTaskIds.length < 4) {
+                 return {valid: true};
+             }
+         }
+ 
+         return {valid: false, reason: '负载已满'};
     }
 
     // 4. 检查互斥 (包干区 vs 晚自习)
@@ -97,6 +175,11 @@ export const checkGroupAvailability = (
         for (const assignedTask of assignedTasks) {
             const isAssignedIndoor = assignedTask.category === TaskCategory.INTERVAL_EXERCISE && assignedTask.subCategory === '室内';
             if (isAssignedIndoor) continue;
+
+            // NEW: 上午眼操同时检查高一两个班不视为时间冲突 (视为合并)
+            const isTaskG1Eye = task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一');
+            const isAssignedG1Eye = assignedTask.category === TaskCategory.EYE_EXERCISE && assignedTask.subCategory === '上午' && assignedTask.name.includes('高一');
+            if (isTaskG1Eye && isAssignedG1Eye) continue; // 允许同时接两个高一眼操
 
             if (assignedTask.timeSlot === task.timeSlot) {
                 return {valid: false, reason: `时间冲突 (${task.timeSlot})`};
@@ -253,10 +336,31 @@ const calculateEnergy = (
             const timeSlots = new Set<string>();
             tasks.forEach(t => {
                 if (t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内') return;
-                if (timeSlots.has(t.timeSlot)) {
+                
+                // NEW: 高一上午眼操合并豁免
+                // 如果是高一上午眼操，我们用特殊标记来代替时间槽，从而避免冲突
+                let slot = t.timeSlot;
+                if (t.category === TaskCategory.EYE_EXERCISE && t.subCategory === '上午' && t.name.includes('高一')) {
+                    slot = 'EYE_AM_G1_MERGED'; // 将两个班的任务视为同一时间槽（但这里 set.add 会导致第二次也被添加？）
+                    // 不，如果用同一个 slot 字符串， set.has 会返回 true，导致冲突。
+                    // 这里的逻辑是：如果 t1 和 t2 都是 高一上午眼操，它们应该兼容。
+                    // 原始逻辑：t1 (slot=A), t2 (slot=A) -> 冲突。
+                    // 我们的逻辑：t1 (slot=G1_EYE), t2 (slot=G1_EYE) -> 不冲突。
+                    // 如何实现？
+                    // 我们可以只记录一次。
+                    if (timeSlots.has(slot)) {
+                        // 已经有了。如果是 G1_EYE，且之前那个也是 G1_EYE，则不算冲突？
+                        // 但是 tasks 遍历时，我们不知道 set 里那个是不是 G1_EYE。
+                        // 简单点：如果当前是 G1_EYE，且 set 里已经有 G1_EYE，则忽略。
+                        // 否则，如果 set 里有冲突，加分。
+                        return; // 已经记录过 G1_EYE 了，跳过，不报冲突
+                    }
+                }
+
+                if (timeSlots.has(slot)) {
                     energy += 1500; // 时间冲突惩罚
                 }
-                timeSlots.add(t.timeSlot);
+                timeSlots.add(slot);
             });
         });
     });
@@ -711,11 +815,199 @@ export const autoScheduleMultiGroupAsync = async (
                     });
                 }
 
+                // NEW: 强力重试 - 允许时间冲突 (合并眼操 - 高一上午)
+                // 如果找不到人，允许已经有眼操任务的人再接一个 (即合并 1-3 和 4-6)
+                if (candidates.length === 0 && task.category === TaskCategory.EYE_EXERCISE && 
+                    task.subCategory === '上午' && task.name.includes('高一')) {
+                    
+                    candidates = groupStudents.filter(student => {
+                        // 1. 避嫌 (必须)
+                        if (!canAssign(student, task).valid) return false;
+                        
+                        // 2. 负载检查 (允许到 3 或 4)
+                        if (groupWorkload[student.id] >= 4) return false;
+
+                        // 3. 时间冲突豁免
+                        // 只要他在 EYE_AM 忙碌，我们假设他是因为做眼操忙碌。
+                        // 我们只关心避嫌通过且负载未满。
+                        
+                        // 必须确保他已经有眼操任务？ (优先合并)
+                        // 或者是完全空闲的人 (但之前应该被选了)
+                        // 或者是因为负载=2而被之前逻辑排除的人 (比如有包干区 + 眼操)
+                        // 这里我们放宽限制。
+                        
+                        return true;
+                    });
+
+                    // 排序：优先给已经有眼操任务的人 (实现合并，而不是给做包干区的人)
+                    candidates.sort((a, b) => {
+                        const hasA = studentCategories[a.id].has(TaskCategory.EYE_EXERCISE) ? 1 : 0;
+                        const hasB = studentCategories[b.id].has(TaskCategory.EYE_EXERCISE) ? 1 : 0;
+                        if (hasA !== hasB) return hasB - hasA; // 有眼操优先
+                        
+                        return groupWorkload[a.id] - groupWorkload[b.id]; // 负载小的优先
+                    });
+                }
+
+                // NEW: 如果是室内课间操，且没找到人，允许一人多楼层 (负载 < 5)
+                if (candidates.length === 0 && task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内') {
+                    candidates = groupStudents.filter(student => {
+                        // 允许负载更高，但仅限同类任务叠加
+                        if (groupWorkload[student.id] >= 5) return false;
+                        if (!canAssign(student, task).valid) return false; // 部门检查等
+
+                        // 确保没有非室内课间操的任务（因为室内课间操通常由特殊部门全职负责，但也可能有其他兼职？）
+                        // 实际上，特殊部门只负责室内课间操。
+                        // 检查是否全是室内课间操
+                        const allIndoor = [...studentCategories[student.id]].every(c => c === TaskCategory.INTERVAL_EXERCISE);
+                        // 或者简单点，只要是特殊部门成员就可以
+                        if (!allIndoor) return false;
+
+                        return true;
+                    });
+                }
+
+                // NEW: 高一上午眼保健操 - 默认尝试合并
+                // 即使能找到空闲的人，也优先把 1-3 和 4-6 捆绑给同一个人
+                if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
+                     // 检查是否有人已经有另一半任务
+                     const otherHalf = task.name.includes('1-3') ? '4-6' : '1-3';
+                     // 查找已经持有 otherHalf 的人
+                     const holder = groupStudents.find(s => {
+                         // 检查该学生是否已分配了包含 otherHalf 的任务
+                         // 注意：这里需要遍历 newAssignments
+                         // 效率较低，但人数不多
+                         return ALL_TASKS.some(t => {
+                             if (t.category !== TaskCategory.EYE_EXERCISE || t.subCategory !== '上午' || !t.name.includes('高一')) return false;
+                             if (!t.name.includes(otherHalf)) return false;
+                             return newAssignments[`${t.id}::${g}`] === s.id;
+                         });
+                     });
+
+                     if (holder) {
+                         // 如果找到了持有者，且他不在 candidates 里（可能因为 load=2 被过滤了？）
+                         // 如果他已经在 candidates 里，排序会处理。
+                         // 如果他被过滤了（比如 load=2），我们需要在此处特许他加入吗？
+                         // 是的，用户希望默认合并。
+                         // 检查是否可以特许：
+                         const canAdd = groupWorkload[holder.id] < 4 && canAssign(holder, task).valid;
+                         if (canAdd && !candidates.some(c => c.id === holder.id)) {
+                             candidates.push(holder);
+                         }
+                     }
+                }
+
                 if (candidates.length === 0) continue;
 
                 candidates.sort((a, b) => {
                     const loadA = groupWorkload[a.id];
                     const loadB = groupWorkload[b.id];
+
+                    // NEW: 高一上午眼保健操 - 强力合并偏好
+                    // 只要有一方已经持有另一半任务，无视负载差异，绝对优先
+                    if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
+                         const hasOtherHalf = (sid: string) => {
+                             const otherHalf = task.name.includes('1-3') ? '4-6' : '1-3';
+                             return ALL_TASKS.some(t => {
+                                 if (t.category !== TaskCategory.EYE_EXERCISE || t.subCategory !== '上午' || !t.name.includes('高一')) return false;
+                                 if (!t.name.includes(otherHalf)) return false;
+                                 return newAssignments[`${t.id}::${g}`] === sid;
+                             });
+                         };
+                         const hasA = hasOtherHalf(a.id);
+                         const hasB = hasOtherHalf(b.id);
+                         if (hasA && !hasB) return -1;
+                         if (!hasA && hasB) return 1;
+                    }
+                    
+                    // 特殊逻辑: 对于室内课间操，如果我们希望 "一人多层"，那么应该优先分配给 "已有室内任务的人" (即 load 大的人?)
+                    // 不，全局仍然是负载均衡。
+                    // 但是，当所有人 load 都相同时，或者当进入 "一人多层" 模式 (load >= 2) 时，我们需要特殊处理。
+                    // 目前的 sort 是全局的。
+                    // 如果 task 是室内课间操:
+                    if (task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内') {
+                        const getAssignedFloors = (sid: string) => {
+                             const floors: number[] = [];
+                             // 遍历当前新分配中该学生的所有任务
+                             ALL_TASKS.forEach(t => {
+                                 const k = `${t.id}::${g}`;
+                                 if (newAssignments[k] === sid && t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内') {
+                                     const map: Record<string, number> = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5};
+                                     const floorChar = t.name.charAt(0);
+                                     if (map[floorChar]) floors.push(map[floorChar]);
+                                 }
+                             });
+                             return floors;
+                        };
+                        const floorsA = getAssignedFloors(a.id);
+                        const floorsB = getAssignedFloors(b.id);
+                        
+                        // 如果某人已经有室内任务，且是相邻的，我们希望优先给他 (即使他负载可能稍高?)
+                        // 不，负载限制是硬性的 (在 candidates 过滤里)。
+                        // 但在排序时，通常 loadA - loadB 会让 load 小的排前面。
+                        // 比如 A (load=0), B (load=1, floor=1)。
+                        // 如果分配 2楼。
+                        // 按 load: A 优先。结果 A:2, B:1。
+                        // 按 dist: A (inf), B (1)。B 优先。
+                        // 这里冲突了！
+                        // 如果我们想 "凑单"，必须打破 load 优先。
+                        // 但是打破 load 优先会导致负载不均 (A=0, B=2)。
+                        // 用户意图: "尽量把同一个年级的放在一起"。这通常意味着 "如果一个人要检查多个"，而不是 "强制一个人检查多个"。
+                        // 也就是说，"在不得不检查多个的情况下，尽量相邻"。
+                        // 或者，"为了相邻，可以牺牲一点负载均衡"?
+                        // 考虑到室内课间操只有 5 个，且通常由少数人负责。
+                        // 如果有 3 个人负责 5 个楼层。平均每人 1.6 个。
+                        // 必然有人 2 个，有人 1 个。
+                        // 我们希望 2 个的那个人拿的是相邻的。
+                        // 比如 A: 1,2; B: 3,4; C: 5.
+                        // 现在的逻辑:
+                        // 1. 分配 1楼 -> A (load=1)
+                        // 2. 分配 2楼 -> B (load=0, 优先) -> B: 2楼
+                        // 3. 分配 3楼 -> C (load=0, 优先) -> C: 3楼
+                        // 4. 分配 4楼 -> A,B,C load=1.
+                        //    dist: A(3), B(2), C(1). -> C 优先 -> C: 3,4
+                        // 5. 分配 5楼 -> A,B load=1. C load=2.
+                        //    C 排除 (假设 max=2, 且还有 A,B 可用).
+                        //    A(4), B(3). -> B 优先 -> B: 2,5
+                        // 结果: A:1, B:2,5, C:3,4.
+                        // B 的 2,5 不相邻。
+                        // 为什么 B 拿了 2楼？因为步骤 2 时 B load=0。
+                        // 如果步骤 2 时，A (load=1, dist=1) 能优于 B (load=0)，那么 A: 1,2。
+                        // 这就意味着我们要 "聚类优先于负载"。
+                        
+                        // 让我们尝试: 如果任务是室内课间操，且某人已有相邻任务，优先给他 (即使 load 高 1 个?)
+                        // 仅当 load 差距不大时 (比如差 1)。
+                        // 如果 load 差太多 (比如 A=0, B=4)，那还是给 A 吧。
+                        
+                        // 获取目标楼层
+                        const map: Record<string, number> = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5};
+                        const targetFloor = map[task.name.charAt(0)] || 0;
+                        
+                        if (targetFloor > 0) {
+                            // 计算与目标楼层的最小距离
+                            const getMinDist = (floors: number[]) => {
+                                if (floors.length === 0) return Infinity; 
+                                return Math.min(...floors.map(f => Math.abs(f - targetFloor)));
+                            };
+                            const distA = getMinDist(floorsA);
+                            const distB = getMinDist(floorsB);
+                            
+                            // 如果有人是 "相邻" (dist=1)，且负载只比对方高 1 (或者更少)，优先给他?
+                            // 比如 A (load=1, dist=1), B (load=0, dist=inf).
+                            // 正常 loadA > loadB -> return 1 (B优先).
+                            // 我们想 return -1 (A优先).
+                            
+                            if (distA === 1 && distB !== 1) {
+                                // A 是相邻的，B 不是
+                                // 允许 A 插队，如果 A 的负载不超过 B太多 (比如 loadA <= loadB + 1)
+                                if (loadA <= loadB + 1) return -1;
+                            }
+                            if (distB === 1 && distA !== 1) {
+                                if (loadB <= loadA + 1) return 1;
+                            }
+                        }
+                    }
+
                     if (loadA !== loadB) return loadA - loadB;
 
                     // 1. 包干区偏好: 高二 > 高三 > 高一
@@ -734,6 +1026,60 @@ export const autoScheduleMultiGroupAsync = async (
                         if (hasCleanA && !hasCleanB) return -1;
                         if (!hasCleanA && hasCleanB) return 1;
                     }
+
+                    // 3. 室内课间操偏好: 优先分配给已经负责了相邻楼层的人 (减少移动)
+                    // 注意: 这里假设楼层体现在 task.name 中，如 "一楼", "二楼"
+                    if (task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内') {
+                        const getAssignedFloors = (sid: string) => {
+                            const floors: number[] = [];
+                            // 遍历当前新分配中该学生的所有任务
+                            ALL_TASKS.forEach(t => {
+                                const k = `${t.id}::${g}`;
+                                if (newAssignments[k] === sid && t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内') {
+                                    // 从名字提取楼层: "一楼" -> 1
+                                    const map: Record<string, number> = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5};
+                                    const floorChar = t.name.charAt(0);
+                                    if (map[floorChar]) floors.push(map[floorChar]);
+                                }
+                            });
+                            return floors;
+                        };
+
+                        // 当前任务的目标楼层
+                        const map: Record<string, number> = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5};
+                        const targetFloor = map[task.name.charAt(0)] || 0;
+
+                        if (targetFloor > 0) {
+                            const floorsA = getAssignedFloors(a.id);
+                            const floorsB = getAssignedFloors(b.id);
+
+                            // 计算最小楼层距离 (越小越好)
+                            const getMinDist = (floors: number[]) => {
+                                if (floors.length === 0) return Infinity; // 没有分配过楼层，优先级最低(或者视为中性)
+                                return Math.min(...floors.map(f => Math.abs(f - targetFloor)));
+                            };
+
+                            const distA = getMinDist(floorsA);
+                            const distB = getMinDist(floorsB);
+
+                            if (distA !== distB) {
+                                // 修正: Infinity (没任务) 应该比 任意数字 (有任务) 优先级更低吗？
+                                // 不，前面已经按 load 排序了。如果 load 相同，说明两人任务数相同。
+                                // 如果 floorsA 为空，说明这 1 个任务不是室内课间操? (因为我们只过滤了室内)
+                                // 或者说，loadA=1, 但 floorsA=[]，说明他有一个非室内任务。
+                                // 此时 distA = Infinity。
+                                // 而 B 有一个室内任务，distB = 1。
+                                // 我们应该优先给 B (凑成相邻) 还是给 A (虽然有任务但不是室内的)?
+                                // 如果给 B，B 就有 2 个室内任务了。
+                                // 如果给 A，A 就有 1 个室内 + 1 个非室内。
+                                // 显然，为了 "同类聚集"，应该优先给 B。
+                                // 所以 dist 小的优先是正确的 (1 < Infinity)。
+
+                                return distA - distB;
+                            }
+                        }
+                    }
+
                     return Math.random() - 0.5;
                 });
 
@@ -918,6 +1264,16 @@ export const getScheduleConflicts = (
 
             timeSlotCounts.forEach((taskIds, slot) => {
                 if (taskIds.length > 1) {
+                    // NEW: 高一上午眼操合并豁免
+                    if (slot === TimeSlot.EYE_AM) {
+                        const allTasksAreG1Eye = taskIds.every(tid => {
+                            const t = ALL_TASKS.find(x => x.id === tid);
+                            return t && t.category === TaskCategory.EYE_EXERCISE && t.subCategory === '上午' && t.name.includes('高一');
+                        });
+                        // 如果冲突的任务全部是高一上午眼操，则视为合并，不报错
+                        if (allTasksAreG1Eye) return;
+                    }
+
                     taskIds.forEach(tid => {
                         conflicts.push({
                             taskId: tid,

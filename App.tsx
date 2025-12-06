@@ -601,8 +601,17 @@ const App: React.FC = () => {
             let currentClass = '';
 
             sortedStudents.forEach(student => {
-                const tasks = studentTasks[student.id];
-                if (!tasks || tasks.length === 0) return;
+                let tasks = studentTasks[student.id] || [];
+                if (tasks.length === 0) return;
+
+                // NEW: 合并显示 "高一 (1-3班)" 和 "高一 (4-6班)" -> "高一"
+                const hasG1A = tasks.includes('高一 (1-3班)');
+                const hasG1B = tasks.includes('高一 (4-6班)');
+                
+                if (hasG1A && hasG1B) {
+                    tasks = tasks.filter(t => t !== '高一 (1-3班)' && t !== '高一 (4-6班)');
+                    tasks.push('高一');
+                }
 
                 const className = formatClassName(student.grade, student.classNum);
                 if (className !== currentClass) {
@@ -669,8 +678,17 @@ const App: React.FC = () => {
                             let currentClass = '';
 
                             sortedStudents.forEach(student => {
-                                const tasks = studentTasks[student.id];
-                                if (!tasks || tasks.length === 0) return;
+                                let tasks = studentTasks[student.id] || [];
+                                if (tasks.length === 0) return;
+
+                                // NEW: 合并显示
+                                const hasG1A = tasks.includes('高一 (1-3班)');
+                                const hasG1B = tasks.includes('高一 (4-6班)');
+                                
+                                if (hasG1A && hasG1B) {
+                                    tasks = tasks.filter(t => t !== '高一 (1-3班)' && t !== '高一 (4-6班)');
+                                    tasks.push('高一');
+                                }
 
                                 const className = formatClassName(student.grade, student.classNum);
                                 if (className !== currentClass) {
