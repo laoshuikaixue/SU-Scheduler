@@ -24,6 +24,8 @@ const App: React.FC = () => {
   // Export Dialog State
   const [exportDialog, setExportDialog] = useState<{ isOpen: boolean, type: 'excel' | 'image' | null }>({ isOpen: false, type: null });
   const [includePersonalList, setIncludePersonalList] = useState(false);
+  const [imageScale, setImageScale] = useState(2);
+  const [targetWidth, setTargetWidth] = useState<'auto' | 'a4' | 'a4_landscape'>('auto');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -144,7 +146,10 @@ const App: React.FC = () => {
         // Also normalize parentheses to full-width
         const cleanName = task.name.replace('点位', '').replace(/\(/g, '（').replace(/\)/g, '）');
         
-        const taskName = `${catName}${task.subCategory}${cleanName}`;
+        // Avoid duplication like "晚自习晚自习"
+        const sub = task.subCategory === task.category ? '' : task.subCategory;
+
+        const taskName = `${catName}${sub}${cleanName}`;
         
         // Append group info only if multiple groups exist
         const groupSuffix = groupCount > 1 ? `(第${groupIdx + 1}组)` : '';
@@ -392,7 +397,7 @@ const App: React.FC = () => {
     const element = document.getElementById('schedule-export-area');
     if (element) {
       const canvas = await html2canvas(element, { 
-        scale: 2,
+        scale: imageScale,
         onclone: (clonedDoc) => {
             // 1. Hide the description text
             const desc = clonedDoc.getElementById('schedule-description');
@@ -401,6 +406,19 @@ const App: React.FC = () => {
             // 2. Add Personal List & Footer
             const container = clonedDoc.getElementById('schedule-export-area');
             if (container) {
+                // Apply Width Settings
+                if (targetWidth === 'a4' || targetWidth === 'a4_landscape') {
+                    const width = targetWidth === 'a4' ? '794px' : '1123px';
+                    container.style.width = width;
+                    container.style.minWidth = 'unset';
+                    // Find table and adjust
+                    const table = container.querySelector('table');
+                    if (table) {
+                        table.style.minWidth = '100%';
+                        table.style.width = '100%';
+                    }
+                }
+
                 // Optional: Personal List
                 if (includePersonalList) {
                     const listContainer = clonedDoc.createElement('div');
@@ -595,6 +613,64 @@ const App: React.FC = () => {
                         附带个人任务清单
                     </label>
                 </div>
+
+                {exportDialog.type === 'image' && (
+                    <div className="mb-6">
+                        <div className="mb-4">
+                            <label className="block text-sm font-medium text-gray-700 mb-2">页面宽度设置</label>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => setTargetWidth('auto')}
+                                    className={`flex-1 py-1.5 text-sm border rounded transition ${
+                                        targetWidth === 'auto'
+                                        ? 'bg-primary text-white border-primary'
+                                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    自动 (Auto)
+                                </button>
+                                <button
+                                    onClick={() => setTargetWidth('a4')}
+                                    className={`flex-1 py-1.5 text-sm border rounded transition ${
+                                        targetWidth === 'a4'
+                                        ? 'bg-primary text-white border-primary'
+                                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    A4 竖向
+                                </button>
+                                <button
+                                    onClick={() => setTargetWidth('a4_landscape')}
+                                    className={`flex-1 py-1.5 text-sm border rounded transition ${
+                                        targetWidth === 'a4_landscape'
+                                        ? 'bg-primary text-white border-primary'
+                                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    A4 横向
+                                </button>
+                            </div>
+                        </div>
+
+                        <label className="block text-sm font-medium text-gray-700 mb-2">图片尺寸倍率 (清晰度)</label>
+                        <div className="flex gap-2">
+                            {[1, 2, 3, 4].map(scale => (
+                                <button
+                                    key={scale}
+                                    onClick={() => setImageScale(scale)}
+                                    className={`flex-1 py-1.5 text-sm border rounded transition ${
+                                        imageScale === scale 
+                                        ? 'bg-primary text-white border-primary' 
+                                        : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    {scale}x
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-xs text-gray-400 mt-1">倍率越高越清晰，文件也越大</p>
+                    </div>
+                )}
 
                 <div className="flex justify-end gap-3">
                     <button 
