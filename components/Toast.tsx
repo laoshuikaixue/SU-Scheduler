@@ -6,9 +6,13 @@ interface ToastProps {
     type?: 'success' | 'error' | 'info';
     onClose: () => void;
     duration?: number;
+    action?: {
+        label: string;
+        onClick: () => void;
+    };
 }
 
-const Toast: React.FC<ToastProps> = ({message, type = 'success', onClose, duration = 3000}) => {
+const Toast: React.FC<ToastProps> = ({message, type = 'success', onClose, duration = 3000, action}) => {
     const [isVisible, setIsVisible] = useState(false);
 
     useEffect(() => {
@@ -40,6 +44,17 @@ const Toast: React.FC<ToastProps> = ({message, type = 'success', onClose, durati
         >
             <Icon size={20}/>
             <span className="font-medium">{message}</span>
+            {action && (
+                <button
+                    onClick={() => {
+                        action.onClick();
+                        handleClose();
+                    }}
+                    className="ml-2 px-2 py-1 text-xs font-bold uppercase tracking-wide rounded bg-white/50 hover:bg-white/80 transition-colors"
+                >
+                    {action.label}
+                </button>
+            )}
             <button onClick={handleClose} className="ml-2 opacity-70 hover:opacity-100">
                 <X size={16}/>
             </button>

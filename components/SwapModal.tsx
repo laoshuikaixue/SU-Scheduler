@@ -5,6 +5,7 @@ import { findSwapOptions, SwapProposal } from '../services/swapService';
 import Modal from './Modal';
 import { autoScheduleMultiGroupAsync } from '../services/scheduler';
 import { formatClassName } from '../utils';
+import { ArrowRight, Check, Shuffle, Wand2, AlertCircle, Loader2, Table, List, ChevronRight } from 'lucide-react';
 
 interface SwapModalProps {
     isOpen: boolean;
@@ -16,6 +17,7 @@ interface SwapModalProps {
     onGlobalReschedule: (newAssignments: Record<string, string>) => void;
 }
 
+// 表格差异视图组件
 const ScheduleDiffTable: React.FC<{
     students: Student[];
     oldAssignments: Record<string, string>;
@@ -43,21 +45,21 @@ const ScheduleDiffTable: React.FC<{
     };
 
     return (
-        <div className="overflow-x-auto border rounded shadow-sm bg-white">
-            <table className="w-full border-collapse border border-gray-300 text-xs table-fixed min-w-[800px]">
+        <div className="overflow-x-auto border rounded-lg shadow-sm bg-white">
+            <table className="w-full border-collapse text-xs table-fixed min-w-[800px]">
                 <thead>
-                    <tr className="bg-gray-50">
-                        <th className="border border-gray-300 p-2 w-20 font-bold text-gray-700">项目</th>
-                        <th className="border border-gray-300 p-2 w-16 font-bold text-gray-700">细项</th>
-                        <th className="border border-gray-300 p-2 w-24 font-bold text-gray-700">内容</th>
+                    <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="p-3 w-24 font-semibold text-gray-600 text-left border-r border-gray-100">项目</th>
+                        <th className="p-3 w-20 font-semibold text-gray-600 text-left border-r border-gray-100">细项</th>
+                        <th className="p-3 w-32 font-semibold text-gray-600 text-left border-r border-gray-100">内容</th>
                         {groups.map(g => (
-                            <th key={g} className="border border-gray-300 p-2 font-bold text-gray-700">
+                            <th key={g} className="p-3 font-semibold text-gray-600 border-r border-gray-100 last:border-r-0">
                                 {getGroupName(g)}
                             </th>
                         ))}
                     </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-gray-100">
                     {Object.entries(tasksByCategory).map(([category, tasks]) => {
                         const subCatCounts: Record<string, number> = {};
                         tasks.forEach(t => {
@@ -71,18 +73,18 @@ const ScheduleDiffTable: React.FC<{
                             if (isFirstOfSubCat) renderedSubCats[task.subCategory] = true;
 
                             return (
-                                <tr key={task.id} className="hover:bg-gray-50">
+                                <tr key={task.id} className="hover:bg-gray-50 transition-colors">
                                     {isFirstOfCategory && (
-                                        <td className="border border-gray-300 p-2 font-bold text-gray-700 bg-white align-middle text-center" rowSpan={tasks.length}>
+                                        <td className="p-3 font-medium text-gray-700 bg-gray-50/50 border-r border-gray-100 align-middle" rowSpan={tasks.length}>
                                             {category}
                                         </td>
                                     )}
                                     {isFirstOfSubCat && (
-                                        <td className="border border-gray-300 p-2 text-gray-700 text-center align-middle" rowSpan={subCatCounts[task.subCategory]}>
+                                        <td className="p-3 text-gray-600 border-r border-gray-100 align-middle" rowSpan={subCatCounts[task.subCategory]}>
                                             {task.subCategory}
                                         </td>
                                     )}
-                                    <td className="border border-gray-300 p-2 text-gray-800 text-center truncate" title={task.name}>
+                                    <td className="p-3 text-gray-800 border-r border-gray-100 truncate" title={task.name}>
                                         {task.name}
                                     </td>
                                     {groups.map(g => {
@@ -91,22 +93,23 @@ const ScheduleDiffTable: React.FC<{
                                         const newSid = newAssignments[key];
                                         const isChanged = oldSid !== newSid;
 
-                                        let bgClass = 'bg-white';
+                                        let bgClass = '';
                                         if (isChanged) {
-                                            bgClass = 'bg-yellow-50'; // Highlight changed cells
+                                            bgClass = 'bg-amber-50'; // 高亮变动的单元格
                                         }
 
                                         return (
-                                            <td key={g} className={`border border-gray-300 p-1 text-center align-middle ${bgClass}`}>
+                                            <td key={g} className={`p-2 border-r border-gray-100 last:border-r-0 align-middle ${bgClass}`}>
                                                 {isChanged ? (
                                                     <div className="flex flex-col gap-1">
                                                         {oldSid && (
-                                                            <div className="text-red-400 line-through text-[10px]">
+                                                            <div className="text-red-400 line-through text-[10px] opacity-75">
                                                                 {getStudentName(oldSid)}
                                                             </div>
                                                         )}
                                                         {newSid && (
-                                                            <div className="text-green-600 font-bold">
+                                                            <div className="text-green-600 font-bold flex items-center gap-1">
+                                                                <div className="w-1 h-1 rounded-full bg-green-500"></div>
                                                                 {getStudentName(newSid)}
                                                             </div>
                                                         )}
@@ -144,7 +147,7 @@ const SwapModal: React.FC<SwapModalProps> = ({
     const [selectedTaskKey, setSelectedTaskKey] = useState<string>('');
     const [options, setOptions] = useState<SwapProposal[]>([]);
 
-    // Wish mode state
+    // 许愿模式状态
     const [wishCategory, setWishCategory] = useState<string>('');
     const [wishTaskId, setWishTaskId] = useState<string>('');
     const [wishGroupId, setWishGroupId] = useState<number>(0);
@@ -152,13 +155,13 @@ const SwapModal: React.FC<SwapModalProps> = ({
     const [calculationStatus, setCalculationStatus] = useState<string>('');
     const [errorMessage, setErrorMessage] = useState<string>('');
 
-    // New: Preview state
+    // 预览状态
     const [viewMode, setViewMode] = useState<'input' | 'preview'>('input');
-    const [previewType, setPreviewType] = useState<'list' | 'table'>('list'); // Toggle list/table
+    const [previewType, setPreviewType] = useState<'list' | 'table'>('list'); // 切换列表/表格
     const [generatedProposals, setGeneratedProposals] = useState<Record<string, string>[]>([]);
     const [currentProposalIndex, setCurrentProposalIndex] = useState<number>(0);
 
-    // Reset state when modal opens/closes
+    // 打开/关闭模态框时重置状态
     useEffect(() => {
         if (!isOpen) {
             setSelectedStudentId('');
@@ -177,7 +180,7 @@ const SwapModal: React.FC<SwapModalProps> = ({
         }
     }, [isOpen]);
 
-    // Get assignments for the selected student
+    // 获取所选学生的任务分配
     const studentAssignments = useMemo(() => {
         if (!selectedStudentId) return [];
         const tasks: { task: TaskDefinition; groupId: number; key: string }[] = [];
@@ -198,7 +201,7 @@ const SwapModal: React.FC<SwapModalProps> = ({
         return tasks;
     }, [selectedStudentId, scheduleState.assignments]);
 
-    // Calculate options when student and task are selected (Swap Mode)
+    // 当选中学生和任务时计算选项（调换模式）
     useEffect(() => {
         if (mode === 'swap' && selectedStudentId && selectedTaskKey) {
             const student = students.find(s => s.id === selectedStudentId);
@@ -235,28 +238,28 @@ const SwapModal: React.FC<SwapModalProps> = ({
         setGeneratedProposals([]);
 
         try {
-            // Clone current state to minimize changes
+            // 克隆当前状态以尽量减少变动
             const currentAssignments = { ...scheduleState.assignments };
             const targetKey = `${wishTaskId}::${wishGroupId}`;
 
-            // 1. Remove the student's existing assignments (so they are free to move)
-            // This unlocks them from their old group/task
+            // 1. 移除学生现有的分配（使他们可以自由移动）
+            // 这将他们从旧组/任务中解锁
             Object.keys(currentAssignments).forEach(key => {
                 if (currentAssignments[key] === selectedStudentId) {
                     delete currentAssignments[key];
                 }
             });
 
-            // 2. Remove the assignment at the target slot (if any)
-            // This unlocks the incumbent (they will be redistributed)
+            // 2. 移除目标插槽的分配（如果有）
+            // 这将解锁当前的持有者（他们将被重新分配）
             if (currentAssignments[targetKey]) {
                 delete currentAssignments[targetKey];
             }
 
-            // 3. Force the wish
+            // 3. 强制许愿
             currentAssignments[targetKey] = selectedStudentId;
 
-            // Run 3 attempts to find diverse solutions
+            // 运行 3 次尝试以找到不同的解决方案
             const attempts = 3;
             const results: Record<string, string>[] = [];
 
@@ -267,13 +270,13 @@ const SwapModal: React.FC<SwapModalProps> = ({
                     currentAssignments,
                     numGroups,
                     (log) => {
-                         // Only update if it's a status update, avoid too many re-renders
+                         // 仅在状态更新时更新，避免过多的重新渲染
                          if (log.includes('初始化')) return;
                     }
                 );
 
                 if (newAssignments[targetKey] === selectedStudentId) {
-                    // Strict Check: Ensure NO empty slots
+                    // 严格检查：确保没有空缺
                     const totalSlots = ALL_TASKS.length * numGroups;
                     const assignedCount = Object.keys(newAssignments).length;
 
@@ -282,7 +285,7 @@ const SwapModal: React.FC<SwapModalProps> = ({
                         continue;
                     }
 
-                    // Deduplicate
+                    // 去重
                     const isDuplicate = results.some(r => JSON.stringify(r) === JSON.stringify(newAssignments));
                     if (!isDuplicate) {
                         results.push(newAssignments);
@@ -294,7 +297,7 @@ const SwapModal: React.FC<SwapModalProps> = ({
                 setGeneratedProposals(results);
                 setCurrentProposalIndex(0);
                 setViewMode('preview');
-                setPreviewType('list'); // Default to list view
+                setPreviewType('list'); // 默认为列表视图
                 setIsCalculating(false);
             } else {
                 setErrorMessage('计算失败：无法生成无空缺的有效方案（可能是硬性约束冲突导致）');
@@ -308,19 +311,19 @@ const SwapModal: React.FC<SwapModalProps> = ({
         }
     };
 
-    // Helper to calculate diff
+    // 计算差异的辅助函数
     const getDiff = (oldAssign: Record<string, string>, newAssign: Record<string, string>) => {
         const changes: { student: Student; oldTasks: string[]; newTasks: string[] }[] = [];
         
         students.forEach(student => {
-            // Helper to get task names for a student
+            // 获取学生任务名称的辅助函数
             const getTasks = (assign: Record<string, string>) => {
                 return Object.entries(assign)
                     .filter(([_, sid]) => sid === student.id)
                     .map(([key]) => {
                         const [taskId, gStr] = key.split('::');
                         const task = ALL_TASKS.find(t => t.id === taskId);
-                        return task ? `[${parseInt(gStr) + 1}组] ${task.name}` : '未知任务';
+                        return task ? `[第${parseInt(gStr) + 1}组] ${task.name}` : '未知任务';
                     })
                     .sort();
             };
@@ -336,8 +339,8 @@ const SwapModal: React.FC<SwapModalProps> = ({
         return changes;
     };
 
-    // Searchable student select (simplified for now, just a native select)
-    // Group students by Department for easier finding
+    // 可搜索的学生选择（目前简化为原生选择框）
+    // 按部门分组以便查找
     const studentsByDept = useMemo(() => {
         const groups: Record<string, Student[]> = {};
         students.forEach(s => {
@@ -347,7 +350,7 @@ const SwapModal: React.FC<SwapModalProps> = ({
         return groups;
     }, [students]);
 
-    // Group tasks by category
+    // 按类别分组任务
     const tasksByCategory = useMemo(() => {
         const groups: Record<string, TaskDefinition[]> = {};
         ALL_TASKS.forEach(t => {
@@ -360,35 +363,38 @@ const SwapModal: React.FC<SwapModalProps> = ({
     return (
         <Modal isOpen={isOpen} onClose={onClose} title="智能调换建议" width="w-[1000px]">
             {viewMode === 'input' ? (
-                <>
-                    <div className="flex gap-2 mb-4 border-b pb-2">
+                <div className="flex flex-col h-[600px]">
+                    {/* 模式切换器 */}
+                    <div className="flex p-1 mb-6 bg-gray-100 rounded-lg self-start">
                         <button
                             onClick={() => setMode('swap')}
-                            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${
                                 mode === 'swap' 
-                                    ? 'bg-blue-100 text-blue-700' 
-                                    : 'text-gray-500 hover:bg-gray-100'
+                                    ? 'bg-white text-blue-600 shadow-sm' 
+                                    : 'text-gray-500 hover:text-gray-700'
                             }`}
                         >
+                            <Shuffle size={16} />
                             快速调换
                         </button>
                         <button
                             onClick={() => setMode('wish')}
-                            className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${
+                            className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all ${
                                 mode === 'wish' 
-                                    ? 'bg-purple-100 text-purple-700' 
-                                    : 'text-gray-500 hover:bg-gray-100'
+                                    ? 'bg-white text-purple-600 shadow-sm' 
+                                    : 'text-gray-500 hover:text-gray-700'
                             }`}
                         >
+                            <Wand2 size={16} />
                             许愿重排
                         </button>
                     </div>
 
-                    <div className="space-y-4">
+                    <div className="flex-1 overflow-y-auto pr-2 space-y-6">
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">选择学生</label>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">选择学生</label>
                             <select
-                                className="w-full border border-gray-300 rounded p-2"
+                                className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow"
                                 value={selectedStudentId}
                                 onChange={(e) => {
                                     setSelectedStudentId(e.target.value);
@@ -409,30 +415,40 @@ const SwapModal: React.FC<SwapModalProps> = ({
                         </div>
 
                         {mode === 'swap' && (
-                            <>
+                            <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
                                 {selectedStudentId && (
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">选择希望更换的当前任务</label>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">选择希望更换的当前任务</label>
                                         {studentAssignments.length === 0 ? (
-                                            <div className="text-gray-500 text-sm">该学生当前没有分配任何任务</div>
+                                            <div className="p-4 bg-gray-50 rounded-lg border border-dashed border-gray-300 text-gray-500 text-center text-sm">
+                                                该学生当前没有分配任何任务
+                                            </div>
                                         ) : (
-                                            <div className="grid grid-cols-1 gap-2">
+                                            <div className="grid grid-cols-1 gap-3">
                                                 {studentAssignments.map(({ task, groupId, key }) => (
                                                     <button
                                                         key={key}
-                                                        className={`p-3 text-left border rounded transition-colors ${
+                                                        className={`group relative p-4 text-left border rounded-xl transition-all duration-200 ${
                                                             selectedTaskKey === key
-                                                                ? 'border-blue-500 bg-blue-50 ring-1 ring-blue-500'
-                                                                : 'border-gray-200 hover:bg-gray-50'
+                                                                ? 'border-blue-500 bg-blue-50/50 shadow-sm ring-1 ring-blue-500'
+                                                                : 'border-gray-200 hover:border-blue-300 hover:bg-gray-50'
                                                         }`}
                                                         onClick={() => setSelectedTaskKey(key)}
                                                     >
-                                                        <div className="font-medium text-gray-900">
-                                                            第{groupId + 1}组 - {task.name}
+                                                        <div className="flex justify-between items-center mb-1">
+                                                            <span className="font-bold text-gray-800">第{groupId + 1}组</span>
+                                                            <span className="text-xs font-medium px-2 py-1 bg-white border rounded text-gray-500">
+                                                                {task.category}
+                                                            </span>
                                                         </div>
-                                                        <div className="text-sm text-gray-500">
-                                                            {task.category} | {task.timeSlot}
-                                                        </div>
+                                                        <div className="text-gray-600 text-sm">{task.name}</div>
+                                                        <div className="text-xs text-gray-400 mt-1">{task.timeSlot}</div>
+                                                        
+                                                        {selectedTaskKey === key && (
+                                                            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-blue-500">
+                                                                <Check size={20} />
+                                                            </div>
+                                                        )}
                                                     </button>
                                                 ))}
                                             </div>
@@ -442,33 +458,40 @@ const SwapModal: React.FC<SwapModalProps> = ({
 
                                 {selectedTaskKey && (
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">
                                             可用的调换方案 ({options.length})
                                         </label>
-                                        <div className="max-h-60 overflow-y-auto space-y-2 border rounded p-2 bg-gray-50">
+                                        <div className="max-h-[300px] overflow-y-auto space-y-3 pr-1 custom-scrollbar">
                                             {options.length === 0 ? (
-                                                <div className="text-gray-500 text-center py-4">
-                                                    未找到无冲突的调换方案
+                                                <div className="flex flex-col items-center justify-center py-8 text-gray-500 bg-gray-50 rounded-lg border border-dashed">
+                                                    <AlertCircle className="mb-2 opacity-50" />
+                                                    <span className="text-sm">未找到无冲突的调换方案</span>
                                                 </div>
                                             ) : (
                                                 options.map((opt, idx) => (
                                                     <div
                                                         key={idx}
-                                                        className="bg-white p-3 border border-gray-200 rounded shadow-sm hover:shadow-md transition-shadow flex justify-between items-center"
+                                                        className="group bg-white p-4 border border-gray-200 rounded-xl hover:shadow-md hover:border-blue-200 transition-all flex justify-between items-center gap-4"
                                                     >
-                                                        <div>
-                                                            <div className="text-sm font-medium text-gray-900">
-                                                                {opt.description}
+                                                        <div className="flex-1">
+                                                            <div className="flex items-center gap-2 mb-1">
+                                                                <span className={`px-2 py-0.5 text-[10px] font-bold rounded uppercase tracking-wider ${
+                                                                    opt.type === 'MOVE_TO_EMPTY' 
+                                                                        ? 'bg-green-100 text-green-700' 
+                                                                        : 'bg-blue-100 text-blue-700'
+                                                                }`}>
+                                                                    {opt.type === 'MOVE_TO_EMPTY' ? '直接移动' : '人员互换'}
+                                                                </span>
                                                             </div>
-                                                            <div className="text-xs text-gray-500">
-                                                                {opt.type === 'MOVE_TO_EMPTY' ? '直接移动到空位' : '与现有人员互换'}
+                                                            <div className="text-sm font-medium text-gray-900 leading-relaxed">
+                                                                {opt.description}
                                                             </div>
                                                         </div>
                                                         <button
                                                             onClick={() => handleApply(opt)}
-                                                            className="ml-3 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                                                            className="flex items-center gap-1 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-black transition-colors shadow-sm opacity-0 group-hover:opacity-100 translate-x-2 group-hover:translate-x-0 duration-200"
                                                         >
-                                                            应用
+                                                            应用 <ArrowRight size={14} />
                                                         </button>
                                                     </div>
                                                 ))
@@ -476,20 +499,27 @@ const SwapModal: React.FC<SwapModalProps> = ({
                                         </div>
                                     </div>
                                 )}
-                            </>
+                            </div>
                         )}
 
                         {mode === 'wish' && selectedStudentId && (
-                            <div className="space-y-4 animate-in fade-in duration-300">
-                                <div className="bg-purple-50 p-4 rounded-lg border border-purple-100 text-sm text-purple-800">
-                                    <strong>说明：</strong> 此功能会强制将所选任务分配给该学生，并尝试重新编排其他所有人的任务以解决冲突。这可能会导致大规模的人员变动。
+                            <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+                                <div className="bg-gradient-to-r from-purple-50 to-white p-4 rounded-xl border border-purple-100 text-sm text-purple-800 flex items-start gap-3">
+                                    <Wand2 className="shrink-0 mt-0.5 text-purple-500" size={18} />
+                                    <div>
+                                        <strong className="font-semibold block mb-1">许愿重排功能说明</strong>
+                                        <p className="opacity-90 leading-relaxed">
+                                            此功能会强制将所选任务分配给该学生，并尝试智能重新编排其他所有人的任务以解决冲突。
+                                            系统会生成多个方案供您选择。注意：这可能会导致其他人员的安排发生变动。
+                                        </p>
+                                    </div>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">目标组别</label>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">目标组别</label>
                                         <select
-                                            className="w-full border border-gray-300 rounded p-2"
+                                            className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
                                             value={wishGroupId}
                                             onChange={(e) => setWishGroupId(parseInt(e.target.value))}
                                         >
@@ -499,9 +529,9 @@ const SwapModal: React.FC<SwapModalProps> = ({
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">任务类型</label>
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">任务类型</label>
                                         <select
-                                            className="w-full border border-gray-300 rounded p-2"
+                                            className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
                                             value={wishCategory}
                                             onChange={(e) => {
                                                 setWishCategory(e.target.value);
@@ -517,10 +547,10 @@ const SwapModal: React.FC<SwapModalProps> = ({
                                 </div>
 
                                 {wishCategory && (
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-1">具体任务</label>
+                                    <div className="animate-in fade-in">
+                                        <label className="block text-sm font-semibold text-gray-700 mb-2">具体任务</label>
                                         <select
-                                            className="w-full border border-gray-300 rounded p-2"
+                                            className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none"
                                             value={wishTaskId}
                                             onChange={(e) => setWishTaskId(e.target.value)}
                                         >
@@ -534,17 +564,19 @@ const SwapModal: React.FC<SwapModalProps> = ({
                                     </div>
                                 )}
 
-                                <div className="pt-2 space-y-2">
+                                <div className="pt-2 space-y-3">
                                     {errorMessage && (
-                                        <div className="p-3 bg-red-50 border border-red-100 rounded text-sm text-red-600">
+                                        <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600 animate-in shake">
+                                            <AlertCircle size={16} />
                                             {errorMessage}
                                         </div>
                                     )}
                                     
                                     {isCalculating ? (
-                                        <div className="text-center py-3 bg-gray-50 rounded border">
-                                            <div className="text-blue-600 font-medium mb-1">正在计算重排方案...</div>
-                                            <div className="text-xs text-gray-500 truncate px-4" title={calculationStatus}>
+                                        <div className="flex flex-col items-center justify-center py-6 bg-gray-50 rounded-lg border border-gray-100">
+                                            <Loader2 className="animate-spin text-purple-600 mb-3" size={24} />
+                                            <div className="text-purple-700 font-medium mb-1">正在计算重排方案...</div>
+                                            <div className="text-xs text-gray-500 truncate px-4 max-w-full" title={calculationStatus}>
                                                 {calculationStatus}
                                             </div>
                                         </div>
@@ -552,8 +584,9 @@ const SwapModal: React.FC<SwapModalProps> = ({
                                         <button
                                             onClick={handleWishReschedule}
                                             disabled={!wishTaskId}
-                                            className="w-full py-3 bg-purple-600 text-white rounded font-medium hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
+                                            className="w-full py-3.5 bg-purple-600 text-white rounded-lg font-semibold hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed shadow-sm hover:shadow transition-all flex justify-center items-center gap-2"
                                         >
+                                            <Wand2 size={18} />
                                             尝试生成多种方案
                                         </button>
                                     )}
@@ -561,29 +594,36 @@ const SwapModal: React.FC<SwapModalProps> = ({
                             </div>
                         )}
                     </div>
-                </>
+                </div>
             ) : (
-                <div className="flex flex-col h-[600px]">
-                    <div className="flex items-center justify-between mb-4">
+                <div className="flex flex-col h-[700px]">
+                    <div className="flex items-center justify-between mb-4 pb-4 border-b">
                         <div className="flex items-center gap-4">
-                            <h3 className="text-lg font-medium">
+                            <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                                <Check className="text-green-500" size={20} />
                                 已生成 {generatedProposals.length} 种可选方案
                             </h3>
                             <div className="flex bg-gray-100 p-1 rounded-lg">
                                 <button
                                     onClick={() => setPreviewType('list')}
-                                    className={`px-3 py-1 text-xs font-medium rounded-md transition ${
-                                        previewType === 'list' ? 'bg-white shadow text-gray-800' : 'text-gray-500 hover:text-gray-700'
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                                        previewType === 'list' 
+                                            ? 'bg-white shadow text-gray-800' 
+                                            : 'text-gray-500 hover:text-gray-700'
                                     }`}
                                 >
+                                    <List size={14} />
                                     列表视图
                                 </button>
                                 <button
                                     onClick={() => setPreviewType('table')}
-                                    className={`px-3 py-1 text-xs font-medium rounded-md transition ${
-                                        previewType === 'table' ? 'bg-white shadow text-gray-800' : 'text-gray-500 hover:text-gray-700'
+                                    className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-all ${
+                                        previewType === 'table' 
+                                            ? 'bg-white shadow text-gray-800' 
+                                            : 'text-gray-500 hover:text-gray-700'
                                     }`}
                                 >
+                                    <Table size={14} />
                                     表格对比
                                 </button>
                             </div>
@@ -593,10 +633,10 @@ const SwapModal: React.FC<SwapModalProps> = ({
                                 <button
                                     key={idx}
                                     onClick={() => setCurrentProposalIndex(idx)}
-                                    className={`px-3 py-1 text-sm rounded border ${
+                                    className={`px-4 py-2 text-sm font-medium rounded-lg border transition-all ${
                                         currentProposalIndex === idx
-                                            ? 'bg-purple-600 text-white border-purple-600'
-                                            : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+                                            ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                                            : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'
                                     }`}
                                 >
                                     方案 {idx + 1}
@@ -605,7 +645,7 @@ const SwapModal: React.FC<SwapModalProps> = ({
                         </div>
                     </div>
 
-                    <div className="flex-1 overflow-y-auto border rounded bg-gray-50 p-4 space-y-4">
+                    <div className="flex-1 overflow-y-auto bg-gray-50 p-4 rounded-xl border border-gray-200 mb-4 custom-scrollbar">
                         {(() => {
                             const currentProposal = generatedProposals[currentProposalIndex];
                             
@@ -622,47 +662,67 @@ const SwapModal: React.FC<SwapModalProps> = ({
 
                             const changes = getDiff(scheduleState.assignments, currentProposal);
                             return (
-                                <>
-                                    <div className="bg-white p-3 rounded shadow-sm border">
-                                        <div className="text-sm font-medium text-gray-700 mb-2">方案概览</div>
-                                        <div className="text-sm text-gray-600">
-                                            共 {changes.length} 人任务发生变动。
+                                <div className="space-y-3">
+                                    {changes.length === 0 ? (
+                                        <div className="text-center py-10 text-gray-500">
+                                            没有检测到变动
                                         </div>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        {changes.map(({ student, oldTasks, newTasks }, idx) => (
-                                            <div key={idx} className="bg-white p-3 rounded shadow-sm border border-gray-100">
-                                                <div className="flex items-baseline justify-between mb-1">
-                                                    <span className="font-medium text-gray-900">
-                                                        {student.grade}年{student.classNum}班 - {student.name}
-                                                    </span>
-                                                    <span className="text-xs text-gray-400">
-                                                        {student.department}
+                                    ) : (
+                                        changes.map((change, idx) => (
+                                            <div key={idx} className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm flex items-start gap-4">
+                                                <div className="min-w-[140px] font-medium text-gray-900 pt-1">
+                                                    {change.student.name}
+                                                    <span className="text-xs text-gray-500 ml-2 block font-normal">
+                                                        {formatClassName(change.student.grade, change.student.classNum)}
                                                     </span>
                                                 </div>
-                                                <div className="grid grid-cols-2 gap-4 text-sm">
-                                                    <div className="text-red-600 bg-red-50 p-2 rounded">
-                                                        <div className="text-xs text-red-400 mb-1">变更前</div>
-                                                        {oldTasks.length > 0 ? oldTasks.map(t => <div key={t}>{t}</div>) : '无任务'}
+                                                
+                                                <div className="flex-1 grid grid-cols-[1fr,auto,1fr] gap-4 items-center">
+                                                    <div className="space-y-1">
+                                                        <div className="text-xs text-gray-400 mb-1 uppercase tracking-wider">当前任务</div>
+                                                        {change.oldTasks.length > 0 ? (
+                                                            change.oldTasks.map(t => (
+                                                                <div key={t} className="text-sm text-gray-600 bg-gray-50 px-2 py-1 rounded border border-gray-100 inline-block mr-1 mb-1">
+                                                                    {t}
+                                                                </div>
+                                                            ))
+                                                        ) : (
+                                                            <span className="text-sm text-gray-400 italic">无任务</span>
+                                                        )}
                                                     </div>
-                                                    <div className="text-green-600 bg-green-50 p-2 rounded">
-                                                        <div className="text-xs text-green-400 mb-1">变更后</div>
-                                                        {newTasks.length > 0 ? newTasks.map(t => <div key={t}>{t}</div>) : '无任务'}
+                                                    
+                                                    <div className="text-gray-300">
+                                                        <ArrowRight size={20} />
+                                                    </div>
+
+                                                    <div className="space-y-1">
+                                                        <div className="text-xs text-green-600/70 mb-1 uppercase tracking-wider">新分配</div>
+                                                        {change.newTasks.length > 0 ? (
+                                                            change.newTasks.map(t => (
+                                                                <div key={t} className="text-sm text-green-700 bg-green-50 px-2 py-1 rounded border border-green-100 inline-block mr-1 mb-1 font-medium">
+                                                                    {t}
+                                                                </div>
+                                                            ))
+                                                        ) : (
+                                                            <span className="text-sm text-gray-400 italic">无任务</span>
+                                                        )}
                                                     </div>
                                                 </div>
                                             </div>
-                                        ))}
-                                    </div>
-                                </>
+                                        ))
+                                    )}
+                                </div>
                             );
                         })()}
                     </div>
 
-                    <div className="flex justify-end gap-3 mt-4 pt-4 border-t">
+                    <div className="flex justify-end gap-3 pt-2 border-t">
                         <button
-                            onClick={() => setViewMode('input')}
-                            className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded transition"
+                            onClick={() => {
+                                setViewMode('input');
+                                setGeneratedProposals([]);
+                            }}
+                            className="px-5 py-2.5 text-gray-600 font-medium hover:bg-gray-100 rounded-lg transition-colors"
                         >
                             返回修改
                         </button>
@@ -671,9 +731,10 @@ const SwapModal: React.FC<SwapModalProps> = ({
                                 onGlobalReschedule(generatedProposals[currentProposalIndex]);
                                 onClose();
                             }}
-                            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded shadow-sm transition"
+                            className="px-5 py-2.5 bg-gray-900 text-white font-medium rounded-lg hover:bg-black shadow-lg hover:shadow-xl transition-all flex items-center gap-2"
                         >
-                            确认应用此方案
+                            <Check size={18} />
+                            确认应用方案 {currentProposalIndex + 1}
                         </button>
                     </div>
                 </div>

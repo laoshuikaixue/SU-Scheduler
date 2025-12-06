@@ -46,11 +46,18 @@ const App: React.FC = () => {
     const [history, setHistory] = useState<Record<string, string>[]>([{}]);
     const [historyIndex, setHistoryIndex] = useState(0);
 
+    // 使用 Ref 保持最新的 undo 函数引用，解决 Toast 中闭包过时的问题
+    const handleUndoRef = useRef<() => void>(() => {});
+
     const [groupCount, setGroupCount] = useState(3);
     const [isGroupSelectOpen, setIsGroupSelectOpen] = useState(false); // 控制下拉菜单展开
     const groupSelectRef = useRef<HTMLDivElement>(null); // 用于点击外部关闭
 
-    const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
+    const [toast, setToast] = useState<{
+        message: string,
+        type: 'success' | 'error',
+        action?: { label: string, onClick: () => void }
+    } | null>(null);
     const [logs, setLogs] = useState<string[]>([]);
     const [stats, setStats] = useState<CalculationStats | undefined>(undefined);
     const [isCalculating, setIsCalculating] = useState(false);
@@ -75,8 +82,12 @@ const App: React.FC = () => {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const jsonInputRef = useRef<HTMLInputElement>(null);
 
-    const showToast = (message: string, type: 'success' | 'error' = 'success') => {
-        setToast({message, type});
+    const showToast = (
+        message: string,
+        type: 'success' | 'error' = 'success',
+        action?: { label: string, onClick: () => void }
+    ) => {
+        setToast({message, type, action});
     };
 
     // 辅助函数：将新状态推入历史记录
@@ -95,6 +106,11 @@ const App: React.FC = () => {
             setAssignments(history[newIndex]);
         }
     };
+
+    // 更新 Ref
+    useEffect(() => {
+        handleUndoRef.current = handleUndo;
+    }, [handleUndo]);
 
     const handleRedo = () => {
         if (historyIndex < history.length - 1) {
@@ -200,6 +216,10 @@ const App: React.FC = () => {
         }
 
         pushHistory(next);
+        showToast('交换成功', 'success', {
+            label: '撤销',
+            onClick: () => handleUndoRef.current()
+        });
     };
 
     const handleSmartSwap = (
@@ -237,7 +257,10 @@ const App: React.FC = () => {
         }
 
         pushHistory(next);
-        showToast('调换成功');
+        showToast('调换成功', 'success', {
+            label: '撤销',
+            onClick: () => handleUndoRef.current()
+        });
     };
 
     const handleAutoSchedule = async () => {
@@ -900,7 +923,7 @@ const App: React.FC = () => {
                         onClick={() => setIsSwapModalOpen(true)}
                         className="flex items-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm transition shadow-sm"
                     >
-                        <ArrowLeftRight size={16}/> 期望调换
+                        <ArrowLeftRight size={16}/> 智能调换
                     </button>
 
                     <div className="h-6 w-px bg-gray-300 mx-2"></div>
@@ -975,6 +998,7 @@ const App: React.FC = () => {
                     message={toast.message}
                     type={toast.type}
                     onClose={() => setToast(null)}
+                    action={toast.action}
                 />
             )}
 
@@ -987,7 +1011,10 @@ const App: React.FC = () => {
                 onApplySwap={handleSmartSwap}
                 onGlobalReschedule={(newAssignments) => {
                     pushHistory(newAssignments);
-                    showToast('许愿重排成功');
+                    showToast('许愿重排成功', 'success', {
+                        label: '撤销',
+                        onClick: () => handleUndoRef.current()
+                    });
                 }}
             />
 
