@@ -62,9 +62,10 @@ const App: React.FC = () => {
     const [stats, setStats] = useState<CalculationStats | undefined>(undefined);
     const [isCalculating, setIsCalculating] = useState(false);
     const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
+    const [isTemporaryMode, setIsTemporaryMode] = useState(false);
 
-    const conflicts = getScheduleConflicts(students, assignments, groupCount);
-    const suggestions = getSuggestions(students, conflicts, assignments);
+    const conflicts = getScheduleConflicts(students, assignments, groupCount, { enableTemporaryMode: isTemporaryMode });
+    const suggestions = getSuggestions(students, conflicts, assignments, { enableTemporaryMode: isTemporaryMode });
 
     // 计算每个学生的任务数量
     const taskCounts = React.useMemo(() => {
@@ -288,7 +289,8 @@ const App: React.FC = () => {
                 (log, newStats) => {
                     setLogs(prev => [...prev, log]);
                     if (newStats) setStats(newStats);
-                }
+                },
+                { enableTemporaryMode: isTemporaryMode }
             );
             pushHistory(newSchedule);
             showToast(`${groupCount}组自动编排完成！`);
@@ -314,7 +316,8 @@ const App: React.FC = () => {
                 (log, newStats) => {
                     setLogs(prev => [...prev, log]);
                     if (newStats) setStats(newStats);
-                }
+                },
+                { enableTemporaryMode: isTemporaryMode }
             );
             pushHistory(newSchedule);
             showToast(`${groupCount}组自动补全完成！`);
@@ -369,13 +372,20 @@ const App: React.FC = () => {
                 // 自动生成拼音
                 const py = pinyin(name, {pattern: 'first', toneType: 'none', type: 'array'}).join('');
 
+                const role = row['职务'] || row['角色'];
+                // 自动根据职务判断是否为负责人（显示皇冠标记）
+                // 注意：主席团成员不应被标记为组长（根据用户反馈）
+                const isLeader = role && (role.includes('部长') || role.includes('组长'));
+
                 return {
                     id: `imported-${idx}`,
                     name: name,
                     department: row['部门'] || Department.DISCIPLINE,
                     grade,
                     classNum,
-                    pinyinInitials: py
+                    pinyinInitials: py,
+                    role, // 支持导入职务
+                    isLeader
                 };
             });
 
@@ -388,8 +398,9 @@ const App: React.FC = () => {
 
     const downloadTemplate = () => {
         const ws = XLSX.utils.json_to_sheet([
-            {姓名: '张三', 部门: '纪检部', 班级: '2-1'},
-            {姓名: '李四', 部门: '主席团', 班级: '3-5'}
+            {姓名: '张三', 部门: '纪检部', 班级: '2-1', 职务: '部长'},
+            {姓名: '李四', 部门: '主席团', 班级: '3-5', 职务: '副主席'},
+            {姓名: '王五', 部门: '主席团', 班级: '3-1', 职务: '主席'}
         ]);
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "名单模板");
@@ -939,6 +950,20 @@ const App: React.FC = () => {
                         className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition"
                     >
                         <FileJson size={16}/> 导入数据
+                    </button>
+
+                    <div className="h-6 w-px bg-gray-300 mx-2"></div>
+
+                    <button
+                        onClick={() => setIsTemporaryMode(!isTemporaryMode)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm transition shadow-sm ${
+                            isTemporaryMode 
+                            ? 'bg-orange-500 hover:bg-orange-600 text-white' 
+                            : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                        }`}
+                        title="临时匹配模式：允许主席团检查上午包干区，且强制分配纪检/学习/主席团"
+                    >
+                        <Users size={16}/> {isTemporaryMode ? '临时模式开启' : '临时模式'}
                     </button>
 
                     <button

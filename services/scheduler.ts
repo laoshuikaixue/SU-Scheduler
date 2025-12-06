@@ -1,11 +1,33 @@
-import {Student, TaskCategory, TaskDefinition, TimeSlot} from '../types';
+import {Student, TaskCategory, TaskDefinition, TimeSlot, Department} from '../types';
 import {ALL_TASKS, SPECIAL_DEPARTMENTS} from '../constants';
 
+export interface SchedulerOptions {
+    enableTemporaryMode?: boolean;
+}
+
 // 检查学生是否符合任务的基础硬性要求（部门、年级、避嫌）
-export const canAssign = (student: Student, task: TaskDefinition): { valid: boolean; reason?: string } => {
+export const canAssign = (student: Student, task: TaskDefinition, options?: SchedulerOptions): { valid: boolean; reason?: string } => {
     // 1. 部门职责检查
     if (!task.allowedDepartments.includes(student.department)) {
-        return {valid: false, reason: '部门职责不符'};
+        // 临时模式：允许主席团检查包干区
+        let isAllowedException = false;
+
+        if (options?.enableTemporaryMode && 
+            task.category === TaskCategory.CLEANING) {
+                
+                // 允许 主席团、纪检部、学习部
+                if ([Department.CHAIRMAN, Department.DISCIPLINE, Department.STUDY].includes(student.department)) {
+                    // 区分角色：主席不参与，副主席参与
+                    if (student.department === Department.CHAIRMAN && student.role === '主席') {
+                        return {valid: false, reason: '主席不参与包干区'};
+                    }
+                    isAllowedException = true;
+                }
+        }
+            
+        if (!isAllowedException) {
+            return {valid: false, reason: '部门职责不符'};
+        }
     }
 
     // 2. 眼操班级组冲突检查（避嫌）
@@ -45,10 +67,11 @@ export const checkGroupAvailability = (
     task: TaskDefinition,
     groupId: number,
     currentAssignments: Record<string, string>, // 键: taskId::groupId
-    conflicts: ConflictInfo[] = []
+    conflicts: ConflictInfo[] = [],
+    options?: SchedulerOptions
 ): { valid: boolean; reason?: string } => {
     // 1. 基础资格检查
-    const basicCheck = canAssign(student, task);
+    const basicCheck = canAssign(student, task, options);
     if (!basicCheck.valid) return basicCheck;
 
     // 2. 收集该学生在当前组已分配的任务，并检查跨组冲突
@@ -99,26 +122,40 @@ export const checkGroupAvailability = (
 
     if (newEffectiveLoad > 2) {
         // 例外情况检查
-        // 1. 室内课间操：允许负载更高（<= 5），前提是任务全为室内课间操
-        const isIndoorTask = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
-        if (isIndoorTask) {
-             const allIndoor = assignedTaskIds.every(tid => {
-                 const t = ALL_TASKS.find(x => x.id === tid);
-                 return t && t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内';
-             });
-             if (allIndoor && assignedTaskIds.length < 5) {
-                  return {valid: true};
-              }
-         }
+        // 0. 临时模式：主席团/纪检/学习部 忽略负载限制以填满包干区
+        const isTargetDeptExempt = options?.enableTemporaryMode && 
+            task.category === TaskCategory.CLEANING &&
+            [Department.CHAIRMAN, Department.DISCIPLINE, Department.STUDY].includes(student.department);
 
-         // 2. 眼保健操合并 (高一上午)：允许一人检查多个班级
-         if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
-             if (assignedTaskIds.length < 4) {
-                 return {valid: true};
-             }
-         }
- 
-         return {valid: false, reason: '负载已满'};
+        if (isTargetDeptExempt) {
+            // 即使是豁免部门，如果同时有晚自习，还是不允许（物理互斥）
+            // 但负载限制本身忽略
+        } else {
+            // 1. 室内课间操：允许负载更高（<= 5），前提是任务全为室内课间操
+            const isIndoorTask = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
+            let isIndoorValid = false;
+            if (isIndoorTask) {
+                const allIndoor = assignedTaskIds.every(tid => {
+                    const t = ALL_TASKS.find(x => x.id === tid);
+                    return t && t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内';
+                });
+                if (allIndoor && assignedTaskIds.length < 5) {
+                    isIndoorValid = true;
+                }
+            }
+
+            // 2. 眼保健操合并 (高一上午)：允许一人检查多个班级
+            let isEyeValid = false;
+            if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
+                if (assignedTaskIds.length < 4) {
+                    isEyeValid = true;
+                }
+            }
+    
+            if (!isIndoorValid && !isEyeValid) {
+                return {valid: false, reason: '负载已满'};
+            }
+        }
     }
 
     // 4. 检查互斥 (包干区 vs 晚自习)
@@ -181,8 +218,36 @@ const distributeStudentsToGroups = (
     // 2. 筛选出未分配的学生 (完全自由的学生)
     const availableStudents = students.filter(s => !lockedStudentIds.has(s.id));
 
-    // 3. 打乱未分配学生
-    const shuffledStudents = [...availableStudents].sort(() => Math.random() - 0.5);
+    // 2.1 优先分配组长
+    const leaders = availableStudents.filter(s => s.isLeader);
+    const nonLeaders = availableStudents.filter(s => !s.isLeader);
+
+    // 计算各组已有的组长数量
+    const groupLeaderCounts = groups.map(g => g.filter(s => s.isLeader).length);
+
+    leaders.forEach(leader => {
+        // 找到组长最少的组
+        let minCount = Infinity;
+        let targetGroupIndices: number[] = [];
+
+        groupLeaderCounts.forEach((count, idx) => {
+            if (count < minCount) {
+                minCount = count;
+                targetGroupIndices = [idx];
+            } else if (count === minCount) {
+                targetGroupIndices.push(idx);
+            }
+        });
+
+        // 随机选择一个目标组
+        const targetGroupIndex = targetGroupIndices[Math.floor(Math.random() * targetGroupIndices.length)];
+        
+        groups[targetGroupIndex].push(leader);
+        groupLeaderCounts[targetGroupIndex]++;
+    });
+
+    // 3. 打乱剩余未分配学生
+    const shuffledStudents = [...nonLeaders].sort(() => Math.random() - 0.5);
 
     // 分离特殊部门和常规部门
     const specialStudents: Student[] = [];
@@ -414,7 +479,8 @@ export const optimizeWithSA = (
 export const autoScheduleMultiGroup = (
     students: Student[],
     currentAssignments: Record<string, string>, // 键格式: taskId::groupId
-    numGroups: number
+    numGroups: number,
+    options?: SchedulerOptions
 ): Record<string, string> => {
     let bestAssignments: Record<string, string> = {};
     let maxFilledCount = -1;
@@ -437,8 +503,23 @@ export const autoScheduleMultiGroup = (
         // 将学生分配到各组
         const studentsPerGroup = distributeStudentsToGroups(students, numGroups, lockedAssignments);
 
+        // 追踪学生实际分配到的组 (用于跨组借调时的互斥检查)
+        const studentGroupMap = new Map<string, number>();
+        Object.entries(newAssignments).forEach(([key, sid]) => {
+            const [_, gStr] = key.split('::');
+            studentGroupMap.set(sid, parseInt(gStr));
+        });
+
         // 任务排序：优先处理约束多的任务
         const sortedTasks = [...ALL_TASKS].sort((a, b) => {
+            // 0. 临时模式：包干区最优先
+            if (options?.enableTemporaryMode) {
+                 const isCleanA = a.category === TaskCategory.CLEANING;
+                 const isCleanB = b.category === TaskCategory.CLEANING;
+                 if (isCleanA && !isCleanB) return -1;
+                 if (!isCleanA && isCleanB) return 1;
+            }
+
             // 1. 部门限制少的优先
             const deptDiff = a.allowedDepartments.length - b.allowedDepartments.length;
             if (deptDiff !== 0) return deptDiff;
@@ -484,6 +565,26 @@ export const autoScheduleMultiGroup = (
 
                 // 候选人筛选
                 let candidates = groupStudents.filter(student => {
+                    // 检查是否已被分配到其他组 (全局互斥)
+                    if (studentGroupMap.has(student.id) && studentGroupMap.get(student.id) !== g) return false;
+
+                    // 0. 临时模式豁免
+                    if (options?.enableTemporaryMode && 
+                        task.category === TaskCategory.CLEANING && 
+                        [Department.CHAIRMAN, Department.DISCIPLINE, Department.STUDY].includes(student.department)) {
+                        
+                        if (!canAssign(student, task, options).valid) return false;
+                        
+                        const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
+                        const hasEvening = studentCategories[student.id].has(TaskCategory.EVENING_STUDY);
+                        
+                        if (task.category === TaskCategory.CLEANING && hasCleaning) return false;
+                        if (task.category === TaskCategory.EVENING_STUDY && hasEvening) return false; // 仍保留早晚互斥
+                        if (task.category === TaskCategory.CLEANING && hasEvening) return false;
+
+                        return true; // 忽略负载、时间冲突
+                    }
+
                     // 1. 负载限制 (基础 <= 2)
                     if (groupWorkload[student.id] >= 2) return false;
 
@@ -492,7 +593,7 @@ export const autoScheduleMultiGroup = (
                     if (!isIndoorInterval && studentTimeSlots[student.id].has(task.timeSlot)) return false;
 
                     // 3. 任务特定约束
-                    if (!canAssign(student, task).valid) return false;
+                    if (!canAssign(student, task, options).valid) return false;
 
                     // 4. 互斥逻辑
                     const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
@@ -530,6 +631,28 @@ export const autoScheduleMultiGroup = (
                     });
                 }
 
+                // 尝试跨组借调 (临时模式 + 包干区)
+                if (candidates.length === 0 && 
+                    options?.enableTemporaryMode && 
+                    task.category === TaskCategory.CLEANING) {
+                    
+                    const targetDepts = [Department.CHAIRMAN, Department.DISCIPLINE, Department.STUDY];
+                    // 在所有学生中寻找完全空闲的目标部门人员
+                    const borrowed = students.filter(s => {
+                        if (!targetDepts.includes(s.department)) return false;
+                        if (studentGroupMap.has(s.id)) return false; // 必须未分配任何组/任务
+                        
+                        // 检查基础资格
+                        if (!canAssign(s, task, options).valid) return false;
+                        
+                        return true;
+                    });
+                    
+                    if (borrowed.length > 0) {
+                        candidates = borrowed;
+                    }
+                }
+
                 if (candidates.length === 0) continue;
 
                 // 候选人优先级排序
@@ -561,6 +684,14 @@ export const autoScheduleMultiGroup = (
 
                 const bestCandidate = candidates[0];
                 newAssignments[key] = bestCandidate.id;
+                studentGroupMap.set(bestCandidate.id, g);
+
+                // 初始化借调人员的追踪器
+                if (groupWorkload[bestCandidate.id] === undefined) {
+                    groupWorkload[bestCandidate.id] = 0;
+                    studentCategories[bestCandidate.id] = new Set();
+                    studentTimeSlots[bestCandidate.id] = new Set();
+                }
 
                 groupWorkload[bestCandidate.id]++;
                 studentCategories[bestCandidate.id].add(task.category);
@@ -610,7 +741,8 @@ export const autoScheduleMultiGroupAsync = async (
     students: Student[],
     currentAssignments: Record<string, string>,
     numGroups: number,
-    onProgress: (log: string, stats?: CalculationStats) => void
+    onProgress: (log: string, stats?: CalculationStats) => void,
+    options?: SchedulerOptions
 ): Promise<Record<string, string>> => {
     let bestAssignments: Record<string, string> = {};
     let maxFilledCount = -1;
@@ -642,7 +774,22 @@ export const autoScheduleMultiGroupAsync = async (
         const newAssignments = {...currentAssignments};
         const studentsPerGroup = distributeStudentsToGroups(students, numGroups, lockedAssignments);
 
+        // 追踪学生实际分配到的组 (用于跨组借调时的互斥检查)
+        const studentGroupMap = new Map<string, number>();
+        Object.entries(newAssignments).forEach(([key, sid]) => {
+            const [_, gStr] = key.split('::');
+            studentGroupMap.set(sid, parseInt(gStr));
+        });
+
         const sortedTasks = [...ALL_TASKS].sort((a, b) => {
+            // 0. 临时模式：包干区最优先
+            if (options?.enableTemporaryMode) {
+                 const isCleanA = a.category === TaskCategory.CLEANING;
+                 const isCleanB = b.category === TaskCategory.CLEANING;
+                 if (isCleanA && !isCleanB) return -1;
+                 if (!isCleanA && isCleanB) return 1;
+            }
+
             const deptDiff = a.allowedDepartments.length - b.allowedDepartments.length;
             if (deptDiff !== 0) return deptDiff;
             if (a.forbiddenGrade && !b.forbiddenGrade) return -1;
@@ -691,6 +838,40 @@ export const autoScheduleMultiGroupAsync = async (
                 if (newAssignments[key]) continue;
 
                 let candidates = groupStudents.filter(student => {
+                    // 检查是否已被分配到其他组 (全局互斥)
+                    if (studentGroupMap.has(student.id) && studentGroupMap.get(student.id) !== g) return false;
+
+                    // 0. 临时模式：强制分配优先人员 (主席团/纪检/学习)
+                    if (options?.enableTemporaryMode) {
+                        const targetDepts = [Department.CHAIRMAN, Department.DISCIPLINE, Department.STUDY];
+                        if (targetDepts.includes(student.department)) {
+                             if (!canAssign(student, task, options).valid) return false;
+                             
+                             // 即使是临时模式，时间冲突(除非室内)和互斥仍需检查
+                             const isIndoorInterval = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
+                             // 包干区任务允许时间冲突
+                             const isExemptTime = task.category === TaskCategory.CLEANING;
+                             if (!isIndoorInterval && !isExemptTime && studentTimeSlots[student.id].has(task.timeSlot)) return false;
+
+                             const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
+                             const hasEvening = studentCategories[student.id].has(TaskCategory.EVENING_STUDY);
+                             
+                             if (task.category === TaskCategory.EVENING_STUDY && hasCleaning) return false;
+                             if (task.category === TaskCategory.CLEANING && hasEvening) return false;
+                             
+                             // 恢复一人一包干区限制
+                             if (task.category === TaskCategory.CLEANING && hasCleaning) return false;
+                             if (task.category === TaskCategory.EVENING_STUDY && hasEvening) return false;
+                             
+                             // 主席团/纪检/学习部特殊放宽：确保包干区能填满，忽略负载限制
+                             if (targetDepts.includes(student.department) && task.category === TaskCategory.CLEANING) {
+                                 return true; 
+                             }
+
+                             return true; // 忽略负载限制
+                        }
+                    }
+
                     // 计算有效负载: 高一上午眼操2个算1个
                     let effectiveLoad = groupWorkload[student.id];
                     if (studentG1EyeCounts[student.id] >= 2) {
@@ -731,7 +912,7 @@ export const autoScheduleMultiGroupAsync = async (
                 if (candidates.length === 0 && task.category === TaskCategory.EYE_EXERCISE) {
                     candidates = groupStudents.filter(student => {
                         if (studentTimeSlots[student.id].has(task.timeSlot)) return false;
-                        if (!canAssign(student, task).valid) return false;
+                        if (!canAssign(student, task, options).valid) return false;
                         const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
                         const hasEvening = studentCategories[student.id].has(TaskCategory.EVENING_STUDY);
                         if (hasEvening) return false;
@@ -746,7 +927,7 @@ export const autoScheduleMultiGroupAsync = async (
                     task.subCategory === '上午' && task.name.includes('高一')) {
                     
                     candidates = groupStudents.filter(student => {
-                        if (!canAssign(student, task).valid) return false;
+                        if (!canAssign(student, task, options).valid) return false;
                         if (groupWorkload[student.id] >= 4) return false;
                         // 忽略时间冲突（视为合并）
                         return true;
@@ -765,7 +946,7 @@ export const autoScheduleMultiGroupAsync = async (
                 if (candidates.length === 0 && task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内') {
                     candidates = groupStudents.filter(student => {
                         if (groupWorkload[student.id] >= 5) return false;
-                        if (!canAssign(student, task).valid) return false;
+                        if (!canAssign(student, task, options).valid) return false;
                         
                         // 仅限特殊部门或已负责室内任务的人
                         const allIndoor = [...studentCategories[student.id]].every(c => c === TaskCategory.INTERVAL_EXERCISE);
@@ -787,16 +968,73 @@ export const autoScheduleMultiGroupAsync = async (
                      });
 
                      if (holder) {
-                         const canAdd = groupWorkload[holder.id] < 4 && canAssign(holder, task).valid;
+                         const canAdd = groupWorkload[holder.id] < 4 && canAssign(holder, task, options).valid;
                          if (canAdd && !candidates.some(c => c.id === holder.id)) {
                              candidates.push(holder);
                          }
                      }
                 }
 
+                // 尝试跨组借调 (临时模式 + 包干区)
+                if (candidates.length === 0 && 
+                    options?.enableTemporaryMode && 
+                    task.category === TaskCategory.CLEANING) {
+                    
+                    const targetDepts = [Department.CHAIRMAN, Department.DISCIPLINE, Department.STUDY];
+                    // 在所有学生中寻找完全空闲的目标部门人员
+                    const borrowed = students.filter(s => {
+                        if (!targetDepts.includes(s.department)) return false;
+                        if (studentGroupMap.has(s.id)) return false; // 必须未分配任何组/任务
+                        
+                        // 检查基础资格
+                        if (!canAssign(s, task, options).valid) return false;
+                        
+                        return true;
+                    });
+                    
+                    if (borrowed.length > 0) {
+                        candidates = borrowed;
+                    }
+                }
+
                 if (candidates.length === 0) continue;
 
                 candidates.sort((a, b) => {
+                    // 0. 临时模式：优先保障目标人员 (主席团/纪检/学习) 至少有一个任务
+                    if (options?.enableTemporaryMode) {
+                        const targetDepts = [Department.CHAIRMAN, Department.DISCIPLINE, Department.STUDY];
+                        const isTargetA = targetDepts.includes(a.department);
+                        const isTargetB = targetDepts.includes(b.department);
+                        
+                        const loadA = groupWorkload[a.id];
+                        const loadB = groupWorkload[b.id];
+
+                        // 优先填满包干区 (特别是主席团副主席)
+                        if (task.category === TaskCategory.CLEANING) {
+                             // 如果已经有包干区任务了，就不能再分配了（上面filter已经过滤了，这里是双重保险/排序逻辑）
+                             // 修复 undefined 引用：确保 studentCategories[id] 存在
+                             const hasCleanA = studentCategories[a.id] ? studentCategories[a.id].has(TaskCategory.CLEANING) : false;
+                             const hasCleanB = studentCategories[b.id] ? studentCategories[b.id].has(TaskCategory.CLEANING) : false;
+                             if (hasCleanA && !hasCleanB) return 1; // A已有，B优先
+                             if (!hasCleanA && hasCleanB) return -1;
+
+                             const isChairmanA = a.department === Department.CHAIRMAN && a.role !== '主席';
+                             const isChairmanB = b.department === Department.CHAIRMAN && b.role !== '主席';
+                             
+                             // 副主席优先填坑
+                             if (isChairmanA && !isChairmanB) return -1;
+                             if (!isChairmanA && isChairmanB) return 1;
+                        }
+
+                        // 只要目标人员没有任务，就绝对优先于其他人(或已有任务的目标人员)
+                        if (isTargetA && loadA === 0) {
+                            if (!isTargetB || loadB > 0) return -1;
+                        }
+                        if (isTargetB && loadB === 0) {
+                            if (!isTargetA || loadA > 0) return 1;
+                        }
+                    }
+
                     // 计算有效负载
                     const getEffectiveLoad = (sid: string, rawLoad: number) => {
                         let eff = rawLoad;
@@ -895,6 +1133,16 @@ export const autoScheduleMultiGroupAsync = async (
 
                 const bestCandidate = candidates[0];
                 newAssignments[key] = bestCandidate.id;
+                studentGroupMap.set(bestCandidate.id, g);
+
+                if (groupWorkload[bestCandidate.id] === undefined) {
+                    groupWorkload[bestCandidate.id] = 0;
+                    studentCategories[bestCandidate.id] = new Set();
+                    studentTimeSlots[bestCandidate.id] = new Set();
+                    studentG1EyeCounts[bestCandidate.id] = 0;
+                    studentNonEyeCounts[bestCandidate.id] = 0;
+                }
+
                 groupWorkload[bestCandidate.id]++;
                 studentCategories[bestCandidate.id].add(task.category);
                 studentTimeSlots[bestCandidate.id].add(task.timeSlot);
@@ -985,7 +1233,8 @@ export interface SuggestionInfo {
 export const getScheduleConflicts = (
     students: Student[],
     assignments: Record<string, string>,
-    groupCount: number
+    groupCount: number,
+    options?: SchedulerOptions
 ): ConflictInfo[] => {
     const conflicts: ConflictInfo[] = [];
     const studentMap = new Map(students.map(s => [s.id, s]));
@@ -1054,7 +1303,15 @@ export const getScheduleConflicts = (
             const g1EyeTasks = tasks.filter(t => t.task.category === TaskCategory.EYE_EXERCISE && t.task.subCategory === '上午' && t.task.name.includes('高一'));
             if (g1EyeTasks.length >= 2) effectiveCount -= 1;
             
-            const isValidLoad = effectiveCount <= 2 || (effectiveCount === 3 && nonEyeCount <= 1);
+            let isLoadExempt = false;
+            if (options?.enableTemporaryMode && 
+                [Department.CHAIRMAN, Department.DISCIPLINE, Department.STUDY].includes(student.department)) {
+                // 临时模式下，目标部门如果承担了包干区任务，则忽略负载限制
+                const hasCleaning = tasks.some(t => t.task.category === TaskCategory.CLEANING);
+                if (hasCleaning) isLoadExempt = true;
+            }
+
+            const isValidLoad = isLoadExempt || effectiveCount <= 2 || (effectiveCount === 3 && nonEyeCount <= 1);
 
             if (!isValidLoad) {
                 tasks.forEach(t => {
@@ -1122,7 +1379,7 @@ export const getScheduleConflicts = (
 
             // 规则: 单任务约束 (部门、避嫌)
             tasks.forEach(t => {
-                const validation = canAssign(student, t.task);
+                const validation = canAssign(student, t.task, options);
                 if (!validation.valid) {
                     conflicts.push({
                         taskId: t.id,
@@ -1142,7 +1399,8 @@ export const getScheduleConflicts = (
 export const getSuggestions = (
     students: Student[],
     conflicts: ConflictInfo[],
-    assignments: Record<string, string>
+    assignments: Record<string, string>,
+    options?: SchedulerOptions
 ): SuggestionInfo[] => {
     const suggestions: SuggestionInfo[] = [];
 
@@ -1164,7 +1422,7 @@ export const getSuggestions = (
 
         const candidate = shuffled.find(s => {
             if (s.id === conflict.studentId) return false;
-            const check = checkGroupAvailability(s, task, conflict.groupId, assignments);
+            const check = checkGroupAvailability(s, task, conflict.groupId, assignments, [], options);
             return check.valid;
         });
 

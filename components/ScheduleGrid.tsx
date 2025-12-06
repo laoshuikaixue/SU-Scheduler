@@ -253,17 +253,14 @@ const CellWrapper: React.FC<{
     let bgClass = 'bg-white';
     if (isDragging) {
         bgClass = 'opacity-30';
-    } else if (conflict) {
-        // 冲突优先显示
-        bgClass = conflict.type === 'error' ? 'bg-red-100' : 'bg-yellow-50';
-    } else if (!validation.valid) {
-        // 基础校验失败
-        bgClass = 'bg-red-50';
     } else if (student?.isLeader && isFirstLeaderOccurrence) {
-        // 组长高亮
+        // 组长高亮 (优先显示)
         bgClass = 'bg-yellow-200';
     } else if (isOver) {
         bgClass = 'bg-blue-100/50 shadow-inner';
+    } else if (conflict && conflict.type !== 'error') {
+        // 仅保留警告背景
+        bgClass = 'bg-yellow-50';
     }
 
     return (
@@ -306,29 +303,49 @@ const CellInput: React.FC<{
     const [query, setQuery] = useState('');
     const [isEditing, setIsEditing] = useState(false);
     const [suggestions, setSuggestions] = useState<Student[]>([]);
+    const [selectedIndex, setSelectedIndex] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
         if (isEditing) {
+            let newSuggestions: Student[] = [];
             if (!query) {
-                const recommended = allStudents.filter(s => {
+                newSuggestions = allStudents.filter(s => {
                     const check = checkGroupAvailability(s, task, groupIndex, assignments);
                     return check.valid;
                 }).slice(0, 5);
-                setSuggestions(recommended);
-                return;
-            }
-            const lowerQ = query.toLowerCase();
-            const matches = allStudents.filter(s => {
-                const nameMatch = s.name.includes(query) || (s.pinyinInitials && s.pinyinInitials.includes(lowerQ));
-                if (!nameMatch) return false;
+            } else {
+                const lowerQ = query.toLowerCase();
+                newSuggestions = allStudents.filter(s => {
+                    const nameMatch = s.name.includes(query) || (s.pinyinInitials && s.pinyinInitials.includes(lowerQ));
+                    if (!nameMatch) return false;
 
-                // 同时也检查搜索结果的基本有效性（可选，但用户体验更好）
-                return canAssign(s, task).valid;
-            }).slice(0, 5);
-            setSuggestions(matches);
+                    // 同时也检查搜索结果的基本有效性（可选，但用户体验更好）
+                    return canAssign(s, task).valid;
+                }).slice(0, 5);
+            }
+            setSuggestions(newSuggestions);
+            setSelectedIndex(0);
         }
     }, [query, isEditing, allStudents, task, groupIndex, assignments]);
+
+    const handleKeyDown = (e: React.KeyboardEvent) => {
+        if (!isEditing || suggestions.length === 0) return;
+
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setSelectedIndex(prev => (prev + 1) % suggestions.length);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setSelectedIndex(prev => (prev - 1 + suggestions.length) % suggestions.length);
+        } else if (e.key === 'Enter') {
+            e.preventDefault();
+            if (suggestions[selectedIndex]) {
+                onSelect(suggestions[selectedIndex].id);
+                inputRef.current?.blur();
+            }
+        }
+    };
 
     const handleBlur = () => {
         setTimeout(() => {
@@ -386,15 +403,17 @@ const CellInput: React.FC<{
                         onChange={(e) => setQuery(e.target.value)}
                         onFocus={() => setIsEditing(true)}
                         onBlur={handleBlur}
+                        onKeyDown={handleKeyDown}
                     />
                     {isEditing && suggestions.length > 0 && (
                         <div
                             className="absolute z-50 top-full left-0 w-full bg-white shadow-lg border rounded-md mt-1 overflow-hidden min-w-[120px]">
-                            {suggestions.map(s => (
+                            {suggestions.map((s, index) => (
                                 <div
                                     key={s.id}
-                                    className="px-3 py-2 text-left hover:bg-blue-50 cursor-pointer text-sm border-b last:border-0"
+                                    className={`px-3 py-2 text-left cursor-pointer text-sm border-b last:border-0 ${index === selectedIndex ? 'bg-blue-100' : 'hover:bg-blue-50'}`}
                                     onMouseDown={() => onSelect(s.id)}
+                                    onMouseEnter={() => setSelectedIndex(index)}
                                 >
                                     <div className="font-medium">{s.name}</div>
                                     <div

@@ -30,6 +30,7 @@ export interface Student {
     classNum: number; // 1-6
     pinyinInitials?: string; // 用于拼音搜索
     isLeader?: boolean; // 是否为组长
+    role?: string; // 职务：例如 "主席", "副主席", "部长", "干事"
 }
 
 export interface TaskDefinition {

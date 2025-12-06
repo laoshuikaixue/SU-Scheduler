@@ -41,13 +41,24 @@ const generateMockStudents = (): Student[] => {
         const surname = firstNames[i % firstNames.length];
         const name = surname + lastNames[i % lastNames.length];
 
+        let role = '干事';
+        if (dept === Department.CHAIRMAN) {
+            // 模拟：每 5 个主席团成员中有 1 个主席，其余副主席
+            // 这里简单点，ID % 5 == 0 为主席
+            role = (i % 5 === 0) ? '主席' : '副主席';
+        } else {
+            // 其他部门随机分配部长
+            role = (i % 10 === 0) ? '部长' : '干事';
+        }
+
         students.push({
             id: `mock-${i}`,
             name: name,
             department: dept,
             grade,
             classNum,
-            pinyinInitials: '' // 在 App.tsx 中填充
+            pinyinInitials: '', // 在 App.tsx 中填充
+            role
         });
     }
     return students;
