@@ -2,6 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import StudentList from './components/StudentList';
 import ScheduleGrid from './components/ScheduleGrid';
+import Toast from './components/Toast';
 import { MOCK_STUDENTS, ALL_TASKS } from './constants';
 import { Student, Department } from './types';
 import { autoScheduleMultiGroup } from './services/scheduler';
@@ -18,7 +19,12 @@ const App: React.FC = () => {
   // Assignments key is `${taskId}::${groupIndex}`
   const [assignments, setAssignments] = useState<Record<string, string>>({});
   const [groupCount, setGroupCount] = useState(3);
+  const [toast, setToast] = useState<{message: string, type: 'success' | 'error'} | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, type });
+  };
 
   // Init mock data with pinyin
   useEffect(() => {
@@ -43,10 +49,10 @@ const App: React.FC = () => {
   };
 
   const handleAutoSchedule = () => {
-    // Schedule N groups
-    const newSchedule = autoScheduleMultiGroup(students, assignments, groupCount);
+    // Schedule N groups - Pass empty object to force fresh calculation
+    const newSchedule = autoScheduleMultiGroup(students, {}, groupCount);
     setAssignments(newSchedule);
-    alert(`${groupCount}组自动编排完成！`);
+    showToast(`${groupCount}组自动编排完成！`);
   };
 
   const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -98,7 +104,7 @@ const App: React.FC = () => {
 
       setStudents(newStudents);
       setAssignments({}); 
-      alert(`成功导入 ${newStudents.length} 人，已自动生成简拼`);
+      showToast(`成功导入 ${newStudents.length} 人`);
     };
     reader.readAsBinaryString(file);
   };
@@ -272,6 +278,14 @@ const App: React.FC = () => {
             </div>
         </main>
       </div>
+
+      {toast && (
+        <Toast 
+          message={toast.message} 
+          type={toast.type} 
+          onClose={() => setToast(null)} 
+        />
+      )}
     </div>
   );
 };

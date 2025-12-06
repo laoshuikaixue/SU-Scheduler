@@ -28,14 +28,30 @@ export const canAssign = (student: Student, task: TaskDefinition): { valid: bool
 };
 
 // Helper: Distribute students evenly across groups
+// Added randomization to ensure different results each time
 const distributeStudentsToGroups = (students: Student[], numGroups: number): Student[][] => {
   const groups: Student[][] = Array.from({ length: numGroups }, () => []);
   
-  // Sort students by department to ensure even distribution of departments
-  const sortedStudents = [...students].sort((a, b) => a.department.localeCompare(b.department));
+  // Shuffle students first to ensure randomness in distribution
+  const shuffledStudents = [...students].sort(() => Math.random() - 0.5);
   
-  sortedStudents.forEach((s, idx) => {
-    groups[idx % numGroups].push(s);
+  // Sort shuffled students by department to ensure even distribution of departments
+  // Note: We sort AFTER shuffling to keep randomness within the same department
+  // But wait, sorting by department will group them back together.
+  // We want to distribute departments evenly, but WHICH person from that department goes to which group should be random.
+  
+  // Better approach: Group by department first
+  const deptMap: Record<string, Student[]> = {};
+  shuffledStudents.forEach(s => {
+    if (!deptMap[s.department]) deptMap[s.department] = [];
+    deptMap[s.department].push(s);
+  });
+  
+  // Distribute each department's members round-robin to groups
+  Object.values(deptMap).forEach(deptStudents => {
+      deptStudents.forEach((s, idx) => {
+          groups[idx % numGroups].push(s);
+      });
   });
   
   return groups;
@@ -46,6 +62,9 @@ export const autoScheduleMultiGroup = (
   currentAssignments: Record<string, string>, // Keys are taskId::groupId
   numGroups: number
 ): Record<string, string> => {
+  // If we want a fresh schedule, we should ignore currentAssignments for AUTO slots
+  // But keep manual locks? Currently the UI passes {} so it's fresh.
+  
   const newAssignments = { ...currentAssignments };
   
   // Distribute students into disjoint groups to ensure load balancing

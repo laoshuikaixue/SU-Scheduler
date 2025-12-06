@@ -33,7 +33,7 @@
 
 1. 克隆项目到本地：
    ```bash
-   git clone <repository-url>
+   git clone https://github.com/laoshuikaixue/SU-Scheduler.git
    ```
 
 2. 进入项目目录并安装依赖：

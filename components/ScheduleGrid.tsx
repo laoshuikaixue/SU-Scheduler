@@ -179,7 +179,8 @@ const CellInput: React.FC<{
     <div className="relative h-full w-full p-1 min-h-[40px] flex items-center justify-center">
       {value && !isEditing ? (
         <div 
-            className="flex items-center justify-center w-full cursor-pointer group/cell h-full"
+            key={value.id} // Add key to trigger re-render animation
+            className="flex items-center justify-center w-full cursor-pointer group/cell h-full animate-pop-in"
             onClick={() => {
                 setIsEditing(true);
                 setQuery(value.name);
