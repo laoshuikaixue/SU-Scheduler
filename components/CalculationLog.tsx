@@ -10,14 +10,42 @@ interface CalculationLogProps {
 
 const CalculationLog: React.FC<CalculationLogProps> = ({logs, stats, isCalculating}) => {
     const endRef = useRef<HTMLDivElement>(null);
+    const scrollContainerRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        endRef.current?.scrollIntoView({behavior: 'smooth'});
+        // 使用 requestAnimationFrame 确保在渲染更新后立即执行滚动
+        // 直接设置 scrollTop 比 scrollIntoView 更可靠且无动画延迟，确保实时跟进
+        requestAnimationFrame(() => {
+            if (scrollContainerRef.current) {
+                scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+            }
+        });
     }, [logs]);
 
     return (
         <div
             className="w-full bg-slate-900 text-green-500 font-mono text-xs rounded-xl shadow-2xl mb-6 border border-slate-800 overflow-hidden shrink-0">
+            <style>{`
+                .custom-scrollbar::-webkit-scrollbar {
+                    width: 8px;
+                    height: 8px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-track {
+                    background: transparent;
+                }
+                .custom-scrollbar::-webkit-scrollbar-thumb {
+                    background: #334155; /* slate-700 */
+                    border-radius: 4px;
+                }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+                    background: #475569; /* slate-600 */
+                }
+                /* Firefox */
+                .custom-scrollbar {
+                    scrollbar-width: thin;
+                    scrollbar-color: #334155 transparent;
+                }
+            `}</style>
             {/* 标题栏 */}
             <div className="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
                 <div className="flex items-center gap-2">
@@ -128,7 +156,8 @@ const CalculationLog: React.FC<CalculationLogProps> = ({logs, stats, isCalculati
 
                 {/* 日志 */}
                 <div
-                    className="flex-1 p-3 overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent relative text-[10px] leading-relaxed font-mono">
+                    ref={scrollContainerRef}
+                    className="flex-1 p-3 overflow-y-auto custom-scrollbar relative text-[10px] leading-relaxed font-mono">
                     {logs.length === 0 ? (
                         <div className="h-full flex flex-col items-center justify-center text-slate-600 opacity-50">
                             <p>System Ready.</p>
