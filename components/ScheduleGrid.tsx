@@ -36,12 +36,12 @@ const ScheduleGrid: React.FC<Props> = ({ students, assignments, onAssign, groupC
     <div id="schedule-export-area" className="bg-white p-8 shadow-sm min-h-full">
       <div className="text-center mb-6">
         <h1 className="text-2xl font-bold text-gray-800">学生会常规检查安排表</h1>
-        <p className="text-gray-500 text-sm mt-1">
+        <p id="schedule-description" className="text-gray-500 text-sm mt-1">
             当前编排：{groupCount} 组 | 支持拖拽或简拼输入（自动匹配首字母）
         </p>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto p-1">
         <table className="w-full border-collapse border border-gray-400 text-sm table-fixed min-w-[800px]">
           <thead>
             <tr className="bg-gray-50">

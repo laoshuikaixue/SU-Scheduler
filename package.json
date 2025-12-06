@@ -9,13 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "file-saver": "^2.0.5",
+    "html2canvas": "^1.4.1",
+    "lucide-react": "^0.556.0",
+    "pinyin-pro": "^3.18.2",
     "react": "^19.2.1",
     "react-dom": "^19.2.1",
-    "lucide-react": "^0.556.0",
-    "xlsx": "^0.18.5",
-    "html2canvas": "^1.4.1",
-    "file-saver": "^2.0.5",
-    "pinyin-pro": "^3.18.2"
+    "xlsx-js-style": "^1.2.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
