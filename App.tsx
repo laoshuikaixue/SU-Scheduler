@@ -44,6 +44,9 @@ const App: React.FC = () => {
     const [historyIndex, setHistoryIndex] = useState(0);
 
     const [groupCount, setGroupCount] = useState(3);
+    const [isGroupSelectOpen, setIsGroupSelectOpen] = useState(false); // 控制下拉菜单展开
+    const groupSelectRef = useRef<HTMLDivElement>(null); // 用于点击外部关闭
+
     const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
     const [logs, setLogs] = useState<string[]>([]);
     const [stats, setStats] = useState<CalculationStats | undefined>(undefined);
@@ -146,6 +149,19 @@ const App: React.FC = () => {
             pinyinInitials: pinyin(s.name, {pattern: 'first', toneType: 'none', type: 'array'}).join('')
         }));
         setStudents(enriched);
+    }, []);
+
+    // 点击外部关闭下拉菜单
+    useEffect(() => {
+        const handleClickOutside = (event: MouseEvent) => {
+            if (groupSelectRef.current && !groupSelectRef.current.contains(event.target as Node)) {
+                setIsGroupSelectOpen(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
     }, []);
 
     const handleAssign = (taskId: string, groupId: number, studentId: string | null) => {
@@ -735,18 +751,40 @@ const App: React.FC = () => {
                         </button>
                     </div>
 
-                    <div className="flex items-center gap-2 mr-4 bg-gray-50 px-2 py-1 rounded border">
+                    <div className="flex items-center gap-2 mr-4 bg-gray-50 px-3 py-1.5 rounded-full border shadow-sm hover:shadow transition-shadow relative" ref={groupSelectRef}>
                         <Users size={16} className="text-gray-500"/>
-                        <span className="text-sm text-gray-600">组数:</span>
-                        <select
-                            value={groupCount}
-                            onChange={(e) => setGroupCount(Number(e.target.value))}
-                            className="bg-transparent text-sm font-medium outline-none cursor-pointer"
+                        <span className="text-sm text-gray-600 font-medium">组数:</span>
+                        <div
+                            className="relative cursor-pointer flex items-center gap-1 min-w-[3rem] justify-between"
+                            onClick={() => setIsGroupSelectOpen(!isGroupSelectOpen)}
                         >
-                            {[1, 2, 3, 4, 5, 6].map(n => (
-                                <option key={n} value={n}>{n} 组</option>
-                            ))}
-                        </select>
+                            <span className="text-sm font-bold text-primary">{groupCount}</span>
+                            <svg
+                                className={`h-4 w-4 fill-current text-gray-400 transition-transform duration-200 ${isGroupSelectOpen ? 'rotate-180' : ''}`}
+                                xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"
+                            >
+                                <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"/>
+                            </svg>
+                        </div>
+                        
+                        {isGroupSelectOpen && (
+                            <div className="absolute top-full left-0 mt-2 w-full min-w-[100px] bg-white rounded-lg shadow-xl border border-gray-100 py-1 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+                                {[1, 2, 3, 4, 5, 6].map(n => (
+                                    <div
+                                        key={n}
+                                        onClick={() => {
+                                            setGroupCount(n);
+                                            setIsGroupSelectOpen(false);
+                                        }}
+                                        className={`px-4 py-2 text-sm cursor-pointer transition-colors flex items-center justify-between
+                                            ${groupCount === n ? 'bg-blue-50 text-primary font-medium' : 'text-gray-600 hover:bg-gray-50'}`}
+                                    >
+                                        <span>{n} 组</span>
+                                        {groupCount === n && <div className="w-1.5 h-1.5 rounded-full bg-primary"/>}
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
 
                     <button

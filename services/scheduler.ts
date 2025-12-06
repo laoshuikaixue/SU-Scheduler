@@ -379,7 +379,7 @@ export const autoScheduleMultiGroup = (
     let maxFilledCount = -1;
     let minLoadVariance = Infinity; // 追踪负载方差（平方和），越小越均衡
     const totalSlots = ALL_TASKS.length * numGroups;
-    const MAX_RETRIES = 50; // 增加重试次数以应对复杂的约束组合
+    const MAX_RETRIES = 100; // 重试次数
 
     // 预处理锁定信息: studentId -> Set<groupId>
     const lockedAssignments = new Map<string, Set<number>>();
@@ -529,7 +529,18 @@ export const autoScheduleMultiGroup = (
                     if (loadA !== loadB) return loadA - loadB;
 
                     // 进阶逻辑: 组合偏好
-                    // 如果当前任务是眼操，优先给已经有包干区的人 (凑成 包干+眼操)
+
+                    // 1. 包干区偏好: 高二 > 高三 > 高一
+                    if (task.category === TaskCategory.CLEANING) {
+                        // 如果是 "迟到" 检查，也算作包干区的一种，同样优先高二
+                        // 逻辑保持一致
+                        if (a.grade === 2 && b.grade !== 2) return -1;
+                        if (b.grade === 2 && a.grade !== 2) return 1;
+                        if (a.grade === 3 && b.grade !== 3) return -1;
+                        if (b.grade === 3 && a.grade !== 3) return 1;
+                    }
+
+                    // 2. 眼操偏好: 优先给已经有包干区的人 (凑成 包干+眼操)
                     if (task.category === TaskCategory.EYE_EXERCISE) {
                         const hasCleanA = studentCategories[a.id].has(TaskCategory.CLEANING);
                         const hasCleanB = studentCategories[b.id].has(TaskCategory.CLEANING);
@@ -603,7 +614,7 @@ export const autoScheduleMultiGroupAsync = async (
     let maxFilledCount = -1;
     let minLoadVariance = Infinity;
     const totalSlots = ALL_TASKS.length * numGroups;
-    const MAX_RETRIES = 50;
+    const MAX_RETRIES = 100;
 
     const lockedAssignments = new Map<string, Set<number>>();
     Object.entries(currentAssignments).forEach(([key, sId]) => {
@@ -699,6 +710,17 @@ export const autoScheduleMultiGroupAsync = async (
                     const loadA = groupWorkload[a.id];
                     const loadB = groupWorkload[b.id];
                     if (loadA !== loadB) return loadA - loadB;
+
+                    // 1. 包干区偏好: 高二 > 高三 > 高一
+                    if (task.category === TaskCategory.CLEANING) {
+                        // 如果是 "迟到" 检查，也算作包干区的一种，同样优先高二
+                        // 逻辑保持一致
+                        if (a.grade === 2 && b.grade !== 2) return -1;
+                        if (b.grade === 2 && a.grade !== 2) return 1;
+                        if (a.grade === 3 && b.grade !== 3) return -1;
+                        if (b.grade === 3 && a.grade !== 3) return 1;
+                    }
+
                     if (task.category === TaskCategory.EYE_EXERCISE) {
                         const hasCleanA = studentCategories[a.id].has(TaskCategory.CLEANING);
                         const hasCleanB = studentCategories[b.id].has(TaskCategory.CLEANING);
