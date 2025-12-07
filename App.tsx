@@ -996,15 +996,15 @@ const App: React.FC = () => {
 
     return (
         <div className="flex flex-col h-screen bg-gray-50">
-            <header className="bg-white border-b px-6 py-4 flex justify-between items-center shadow-sm z-10 shrink-0">
+            <header className="bg-white border-b px-6 py-4 flex flex-wrap gap-y-4 justify-between items-center shadow-sm z-10 shrink-0">
                 <div className="flex items-center gap-3">
                     <div className="bg-primary flex items-center justify-center rounded-lg overflow-hidden shadow-md">
                         <img src="/images/zslhzxLOGO.png" alt="Logo" className="h-10 w-auto object-contain p-1"/>
                     </div>
-                    <h1 className="font-bold text-xl text-gray-800">学生会检查编排系统</h1>
+                    <h1 className="font-bold text-xl text-gray-800 whitespace-nowrap">学生会检查编排系统</h1>
                 </div>
 
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                     {/* 撤销/重做 控件 */}
                     <div className="flex items-center gap-1 mr-2 border-r pr-2 border-gray-300">
                         <button onClick={handleUndo} disabled={historyIndex <= 0}
@@ -1021,12 +1021,12 @@ const App: React.FC = () => {
 
                     <div className="flex items-center gap-2 mr-4 bg-gray-50 px-3 py-1.5 rounded-full border shadow-sm hover:shadow transition-shadow relative" ref={groupSelectRef}>
                         <Users size={16} className="text-gray-500"/>
-                        <span className="text-sm text-gray-600 font-medium">组数:</span>
+                        <span className="text-sm text-gray-600 font-medium whitespace-nowrap">组数:</span>
                         <div
                             className="relative cursor-pointer flex items-center gap-1 min-w-[3rem] justify-between"
                             onClick={() => setIsGroupSelectOpen(!isGroupSelectOpen)}
                         >
-                            <span className="text-sm font-bold text-primary">{groupCount}</span>
+                            <span className="text-sm font-bold text-primary whitespace-nowrap">{groupCount}</span>
                             <svg
                                 className={`h-4 w-4 fill-current text-gray-400 transition-transform duration-200 ${isGroupSelectOpen ? 'rotate-180' : ''}`}
                                 xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"
@@ -1057,7 +1057,7 @@ const App: React.FC = () => {
 
                     <button
                         onClick={downloadTemplate}
-                        className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition"
+                        className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition whitespace-nowrap"
                     >
                         <FileSpreadsheet size={16}/> 下载模板
                     </button>
@@ -1071,7 +1071,7 @@ const App: React.FC = () => {
                     />
                     <button
                         onClick={() => fileInputRef.current?.click()}
-                        className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition"
+                        className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition whitespace-nowrap"
                     >
                         <Upload size={16}/> 导入人员
                     </button>
@@ -1085,7 +1085,7 @@ const App: React.FC = () => {
                     />
                     <button
                         onClick={() => jsonInputRef.current?.click()}
-                        className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition"
+                        className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition whitespace-nowrap"
                     >
                         <FileJson size={16}/> 导入数据
                     </button>
@@ -1094,7 +1094,7 @@ const App: React.FC = () => {
 
                     <button
                         onClick={() => setIsTemporaryMode(!isTemporaryMode)}
-                        className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm transition shadow-sm ${
+                        className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm transition shadow-sm whitespace-nowrap ${
                             isTemporaryMode 
                             ? 'bg-orange-500 hover:bg-orange-600 text-white' 
                             : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
@@ -1106,21 +1106,21 @@ const App: React.FC = () => {
 
                     <button
                         onClick={handleAutoSchedule}
-                        className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-blue-600 text-white rounded-md text-sm transition shadow-sm"
+                        className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-blue-600 text-white rounded-md text-sm transition shadow-sm whitespace-nowrap"
                     >
                         <Wand2 size={16}/> 智能编排
                     </button>
 
                     <button
                         onClick={handleAutoComplete}
-                        className="flex items-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md text-sm transition shadow-sm"
+                        className="flex items-center gap-2 px-3 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-md text-sm transition shadow-sm whitespace-nowrap"
                     >
                         <Sparkles size={16}/> 自动补全
                     </button>
 
                     <button
                         onClick={() => setIsSwapModalOpen(true)}
-                        className="flex items-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm transition shadow-sm"
+                        className="flex items-center gap-2 px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md text-sm transition shadow-sm whitespace-nowrap"
                     >
                         <ArrowLeftRight size={16}/> 智能调换
                     </button>
