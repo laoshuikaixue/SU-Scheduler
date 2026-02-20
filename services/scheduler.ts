@@ -3,6 +3,7 @@ import {ALL_TASKS, SPECIAL_DEPARTMENTS} from '../constants';
 
 export interface SchedulerOptions {
     enableTemporaryMode?: boolean;
+    maxTasksPerPerson?: number; // 新增：每人最大任务数，用于动态调整负载
 }
 
 // 检查学生是否符合任务的基础硬性要求（部门、年级、避嫌）
@@ -201,7 +202,8 @@ export const checkGroupAvailability = (
     return {valid: true};
 }
 
-// 将学生均匀分配到各组，优先保留锁定分配，并确保特殊部门均匀分布
+// 将学生动态分配到各组，根据实际人数自适应调整每组规模
+// 优先保留锁定分配，并确保特殊部门均匀分布
 const distributeStudentsToGroups = (
     students: Student[],
     numGroups: number,
@@ -278,6 +280,7 @@ const distributeStudentsToGroups = (
     });
 
     // 5. 常规部门分配 (按年级+部门细分后轮询分配)
+    // 动态优化：根据实际人数自适应调整分配策略
     const bucketMap: Record<string, Student[]> = {};
     regularStudents.forEach(s => {
         const key = `${s.department}-${s.grade}`;
@@ -287,11 +290,21 @@ const distributeStudentsToGroups = (
 
     groupOffset = (groupOffset + 1) % numGroups;
 
+    // 动态分配：优先填充人数较少的组
     Object.values(bucketMap).forEach(bucketStudents => {
-        bucketStudents.forEach((s, idx) => {
-            groups[(idx + groupOffset) % numGroups].push(s);
+        bucketStudents.forEach((s) => {
+            // 找到当前人数最少的组
+            const groupSizes = groups.map(g => g.length);
+            const minSize = Math.min(...groupSizes);
+            const targetGroups = groupSizes
+                .map((size, idx) => ({ size, idx }))
+                .filter(g => g.size === minSize)
+                .map(g => g.idx);
+            
+            // 在人数最少的组中随机选择一个
+            const targetGroup = targetGroups[Math.floor(Math.random() * targetGroups.length)];
+            groups[targetGroup].push(s);
         });
-        groupOffset = (groupOffset + 1) % numGroups;
     });
 
     return groups;
@@ -497,6 +510,26 @@ export const autoScheduleMultiGroup = (
     const totalSlots = ALL_TASKS.length * numGroups;
     const MAX_RETRIES = 100;
 
+    // 动态计算每人最大任务数
+    // 只计算纪检/学习部的人员和任务
+    const regularDeptStudents = students.filter(s => 
+        s.grade !== 3 && 
+        (s.department === Department.DISCIPLINE || s.department === Department.STUDY)
+    );
+    
+    // 计算纪检/学习部的任务数（排除室内课间操）
+    const regularTasks = ALL_TASKS.filter(t => 
+        t.allowedDepartments.includes(Department.DISCIPLINE) || 
+        t.allowedDepartments.includes(Department.STUDY)
+    );
+    const totalRegularTasks = regularTasks.length * numGroups;
+    
+    // 根据实际可用人数计算负载上限
+    const defaultMaxTasks = regularDeptStudents.length > 0 
+        ? Math.ceil(totalRegularTasks / regularDeptStudents.length) + 1
+        : 3;
+    const maxTasksPerPerson = options?.maxTasksPerPerson ?? defaultMaxTasks;
+
     // 预处理锁定信息
     const lockedAssignments = new Map<string, Set<number>>();
     Object.entries(currentAssignments).forEach(([key, sId]) => {
@@ -594,8 +627,8 @@ export const autoScheduleMultiGroup = (
                         return true; // 忽略负载、时间冲突
                     }
 
-                    // 1. 负载限制 (基础 <= 2)
-                    if (groupWorkload[student.id] >= 2) return false;
+                    // 1. 负载限制 (动态调整)
+                    if (groupWorkload[student.id] >= maxTasksPerPerson) return false;
 
                     // 2. 时间冲突 (室内课间操除外)
                     const isIndoorInterval = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
@@ -619,7 +652,7 @@ export const autoScheduleMultiGroup = (
                 // 如果没找到，尝试放宽负载限制（针对眼操）
                 if (candidates.length === 0 && task.category === TaskCategory.EYE_EXERCISE) {
                     candidates = groupStudents.filter(student => {
-                        // 放宽负载限制: 允许 > 2，前提是已有包干区等情况，但必须保证至少有一个眼操
+                        // 放宽负载限制: 允许超过标准负载，但不超过最大值
                         if (studentTimeSlots[student.id].has(task.timeSlot)) return false;
                         if (!canAssign(student, task).valid) return false;
 
@@ -629,12 +662,8 @@ export const autoScheduleMultiGroup = (
                         if (hasCleaning && hasEvening) return false;
                         if (hasEvening) return false; // 晚自习较重，不再增加
 
-                        // 确保是 "包干+眼操" 的组合，避免三个大任务
-                        if (groupWorkload[student.id] === 2 && !studentCategories[student.id].has(TaskCategory.EYE_EXERCISE)) {
-                            return false;
-                        }
-
-                        if (groupWorkload[student.id] >= 3) return false;
+                        // 确保是 "包干+眼操" 的组合，避免过多大任务
+                        if (groupWorkload[student.id] >= maxTasksPerPerson) return false;
 
                         return true;
                     });
@@ -757,6 +786,25 @@ export const autoScheduleMultiGroupAsync = async (
     const totalSlots = ALL_TASKS.length * numGroups;
     const MAX_RETRIES = 100;
 
+    // 动态计算每人最大任务数
+    // 只计算纪检/学习部的人员和任务
+    const regularDeptStudents = students.filter(s => 
+        s.grade !== 3 && 
+        (s.department === Department.DISCIPLINE || s.department === Department.STUDY)
+    );
+    
+    // 计算纪检/学习部的任务数（排除室内课间操）
+    const regularTasks = ALL_TASKS.filter(t => 
+        t.allowedDepartments.includes(Department.DISCIPLINE) || 
+        t.allowedDepartments.includes(Department.STUDY)
+    );
+    const totalRegularTasks = regularTasks.length * numGroups;
+    
+    const defaultMaxTasks = regularDeptStudents.length > 0 
+        ? Math.ceil(totalRegularTasks / regularDeptStudents.length) + 1
+        : 3;
+    const maxTasksPerPerson = options?.maxTasksPerPerson ?? defaultMaxTasks;
+
     const lockedAssignments = new Map<string, Set<number>>();
     Object.entries(currentAssignments).forEach(([key, sId]) => {
         const [_, gStr] = key.split('::');
@@ -765,7 +813,7 @@ export const autoScheduleMultiGroupAsync = async (
         lockedAssignments.get(sId)!.add(gId);
     });
 
-    onProgress(`初始化完成，准备进行 ${MAX_RETRIES} 次尝试...`, {
+    onProgress(`初始化完成，准备进行 ${MAX_RETRIES} 次尝试... (动态负载上限: ${maxTasksPerPerson}任务/人)`, {
         attempt: 0,
         maxAttempts: MAX_RETRIES,
         coverage: 0,
@@ -894,62 +942,26 @@ export const autoScheduleMultiGroupAsync = async (
                     const futureEffectiveLoad = effectiveLoad + loadIncrement;
                     const futureNonEyeCount = studentNonEyeCounts[student.id] + (task.category !== TaskCategory.EYE_EXERCISE ? 1 : 0);
 
-                    // 0. 包干区特例：包干区任务较重，如果有包干区，严格限制有效负载 <= 2
-                    // 防止出现 "包干区 + 上午眼操 + 下午眼操" 的高负荷情况
+                    // 0. 包干区特例：根据maxTasksPerPerson动态调整
                     const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
                     const isCleaningTask = task.category === TaskCategory.CLEANING;
                     
                     if (hasCleaning || isCleaningTask) {
-                        // 绝对禁止 > 2 个任务 (即使是合并眼操也不行)
                         const currentRawLoad = groupWorkload[student.id];
-                        // 注意：这里必须是严格的物理计数，不能用 effectiveLoad
                         const futureRawLoad = currentRawLoad + 1;
                         
-                        // 允许的唯一组合是：包干区(1) + 其他(1) = 2
-                        if (futureRawLoad > 2) return false;
+                        // 动态限制：根据maxTasksPerPerson调整
+                        // 如果maxTasksPerPerson >= 3，允许包干区+2个其他任务
+                        const maxAllowedWithCleaning = Math.min(maxTasksPerPerson, 3);
                         
-                        // 特别针对 "包干区 + 2个眼操" 的情况进行拦截
-                        if (task.category === TaskCategory.EYE_EXERCISE) {
-                              // 如果已有眼操任务，无论数量，禁止再加眼操
-                              // 这里必须用 studentCategories 结合 groupWorkload 来判断
-                              // 因为 studentCategories.has(EYE) 只要有1个就是true
-                              
-                              // 如果有眼操，且当前任务也是眼操 -> 禁止
-                              if (studentCategories[student.id].has(TaskCategory.EYE_EXERCISE)) {
-                                  return false;
-                              }
-                        }
+                        if (futureRawLoad > maxAllowedWithCleaning) return false;
                         
-                        if (task.category === TaskCategory.CLEANING) {
-                             // 如果正在分配包干区，且已经有 >= 2 个任务 -> 禁止
-                             if (currentRawLoad >= 2) return false;
-                             // 如果已有 >= 1 个眼操，且正在分配包干区 -> 允许（只要总数<=2）
-                             // 但如果已有 >= 2 个眼操 -> 禁止
-                             // 怎么知道眼操数量？
-                             // currentRawLoad - studentNonEyeCounts
-                             // 但 studentNonEyeCounts 还没包含当前的包干区
-                             // 简单点：如果 rawLoad >= 2，肯定不行
-                             
-                             // 还需要防止：已有 2 个眼操，再加包干区
-                             // 此时 currentRawLoad = 2. futureRawLoad = 3 > 2. 已被上面拦截。
-                             
-                             // 防止：已有 1 眼操 + 1 其他，再加包干区 -> 3 > 2. 已拦截。
-                             
-                             // 唯一漏洞：
-                             // 如果 currentRawLoad = 1 (是眼操). future = 2. 允许。
-                             // 如果 currentRawLoad = 1 (是晚自习). future = 2. 允许。
-                             
-                             // 为什么用户说还有 "包干 + 上午眼 + 下午眼"？
-                             // 这意味着 rawLoad = 3.
-                             // 难道 groupWorkload[student.id] 统计有误？
-                             // 或者是 "强力重试" 逻辑绕过了这里的检查？
-                             
-                             // 检查下方的 "强力重试" 逻辑
-                        }
+                        // 如果maxTasksPerPerson < 3，保持原有的严格限制
+                        if (maxTasksPerPerson < 3 && futureRawLoad > 2) return false;
                     }
 
-                    // 允许有效负载达到 3，但必须满足：非眼操任务最多 1 个
-                    if (futureEffectiveLoad > 3) return false;
+                    // 允许有效负载达到maxTasksPerPerson
+                    if (futureEffectiveLoad > maxTasksPerPerson) return false;
                     if (futureEffectiveLoad === 3) {
                          if (futureNonEyeCount > 1) return false;
                     }
