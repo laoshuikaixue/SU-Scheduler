@@ -7,7 +7,7 @@ interface Props {
     isOpen: boolean;
     onClose: () => void;
     students: Student[];
-    onPreview: (plan: { deptATarget: number, deptBTarget: number }) => void;
+    onPreview: (plan: { deptATarget: number, deptBTarget: number, maxTasksPerPerson?: number }) => void;
 }
 
 // 部门定义
@@ -71,43 +71,101 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
     // 2. 需求计算（基于避嫌规则的精确分析）
     const needs = useMemo(() => {
         // --- DEPT A 计算 ---
-        // 高三退休后的避嫌规则分析：
-        // 
-        // 必须由高一负责（每组）：
-        // - 高二眼操上午：1个，高二眼操下午：1个，高二晚自习：1个
-        // - 小计：3个/组 × 3组 = 9个任务 → 最少需要9个高一（每人1任务）
-        //
-        // 必须由高二负责（每组）：
-        // - 高一眼操上午：1个，高一眼操下午：1个，高一晚自习：1个
-        // - 小计：3个/组 × 3组 = 9个任务 → 最少需要9个高二（每人1任务）
-        //
-        // 高一或高二都可以（每组）：
-        // - 包干区：5个，室外课间操：3个，高三眼操：2个，高三晚自习：1个
-        // - 小计：11个/组 × 3组 = 33个任务
-        //
-        // 总任务数：9 + 9 + 33 = 51个任务（排除室内课间操）
+        // 任务详情 (基于 constants.ts 和 user requirements):
+        // 每组任务:
+        // 1. 包干区 (Clean): 5 (Outdoor 1 + Indoor 2 + Late 2) - 高一高二均可
+        // 2. 室外课间操 (Outdoor): 3 - 高一高二均可
+        // 3. 眼操上午 (Eye AM): 4 (G1-a, G1-b, G2-a, G2-b) 
+        //    - 检查高一(2) -> 必须高二
+        //    - 检查高二(2) -> 必须高一
+        // 4. 眼操下午 (Eye PM): 6 (G1-a/b, G2-a/b, G3-a/b)
+        //    - 检查高一(2) -> 必须高二
+        //    - 检查高二(2) -> 必须高一
+        //    - 检查高三(2) -> 高一高二均可
+        // 5. 晚自习 (Evening): 3 (G1, G2, G3)
+        //    - 检查高一(1) -> 必须高二
+        //    - 检查高二(1) -> 必须高一
+        //    - 检查高三(1) -> 高一高二均可
         
-        // 完全覆盖模式：基于max.json验证
-        // 33人（高一20 + 高二13）→ 100%覆盖
-        const maxTotal = Math.ceil(33 * numGroups / 3);
-        const maxG1 = Math.ceil(20 * numGroups / 3);
-        const maxG2 = maxTotal - maxG1;
-        
-        // 均衡模式：约85%覆盖率
-        // 估算：需要至少18人（高一9 + 高二9）才能覆盖必须任务
-        // 再加上部分灵活任务，约需要25人
-        const balancedTotal = Math.ceil(25 * numGroups / 3);
-        const balancedG1 = Math.ceil(15 * numGroups / 3);
-        const balancedG2 = balancedTotal - balancedG1;
-        
-        // 最少模式：约70%覆盖率
-        // 至少需要18人（高一9 + 高二9）才能覆盖必须任务
-        // 但17人会导致某些必须任务无法分配
-        const minTotal = Math.ceil(20 * numGroups / 3);
-        const minG1 = Math.ceil(10 * numGroups / 3);
-        const minG2 = minTotal - minG1;
+        // 汇总每组硬性需求:
+        // 必须由高一完成 (Target G2): EyeAM(2) + EyePM(2) + Even(1) = 5
+        // 必须由高二完成 (Target G1): EyeAM(2) + EyePM(2) + Even(1) = 5
+        // 任意年级 (Any): Clean(5) + Outdoor(3) + EyePM-G3(2) + Even-G3(1) = 11
+        // 总计: 21 任务/组
 
-        // --- DEPT B 计算 ---
+        const tasksPerGroup = {
+            mustG1: 5, 
+            mustG2: 5,
+            any: 11
+        };
+
+        const totalTasks = (tasksPerGroup.mustG1 + tasksPerGroup.mustG2 + tasksPerGroup.any) * numGroups;
+        const totalMustG1 = tasksPerGroup.mustG1 * numGroups;
+        const totalMustG2 = tasksPerGroup.mustG2 * numGroups;
+
+        // 动态规划求解最少人数
+        // minimize P = P_g1 + P_g2
+        // subject to:
+        // 1. P_g1 * k >= totalMustG1 + assigned_any_to_g1
+        // 2. P_g2 * k >= totalMustG2 + assigned_any_to_g2
+        // 3. assigned_any_to_g1 + assigned_any_to_g2 = totalAny
+        // Simplifies to: (P_g1 + P_g2) * k >= totalTasks
+        // AND P_g1 >= ceil(totalMustG1 / k)
+        // AND P_g2 >= ceil(totalMustG2 / k)
+
+        const calculatePeople = (maxLoad: number, efficiency: number = 0.85) => {
+            // 引入效率因子 (Efficiency Factor)
+            // 理论负载 maxLoad 在实际排班中很难 100% 达成（受限于互斥、时间冲突、年级避嫌）
+            // 经验值：Max 3 模式下，有效负载约 2.4-2.5；Max 2 模式下，有效负载约 1.8-1.9
+            const effectiveLoad = maxLoad * efficiency;
+            
+            const effectiveTotal = Math.ceil(totalTasks); // 任务总数不变
+            
+            // 基础约束：按有效负载反推人数
+            let minTotal = Math.ceil(effectiveTotal / effectiveLoad);
+            
+            // 年级约束：必须满足硬性任务 (Hard Constraints)
+            // 硬性任务必须有人做，这里保守一点，按 maxLoad 计算最低门槛，再按比例分配总人数
+            // 或者：硬性任务也受效率影响
+            let minG1 = Math.ceil(totalMustG1 / effectiveLoad);
+            let minG2 = Math.ceil(totalMustG2 / effectiveLoad);
+
+            // 确保 minG1 + minG2 <= minTotal，如果不够，按比例填充
+            if (minG1 + minG2 < minTotal) {
+                const diff = minTotal - (minG1 + minG2);
+                // 按 3:2 比例分配给高一高二 (用户偏好)
+                const addG1 = Math.ceil(diff * 0.6);
+                const addG2 = diff - addG1;
+                minG1 += addG1;
+                minG2 += addG2;
+            } else {
+                // 如果硬性约束导致总人数增加，则更新总人数
+                minTotal = minG1 + minG2;
+            }
+
+            return { total: minTotal, g1: minG1, g2: minG2 };
+        };
+        
+        // 1. 最少模式 (Min): Max 3
+        // 效率因子 0.77 (原0.82 -> 人均 2.31 任务)
+        // 63 / 2.31 = 27.2 -> 28人
+        // 用户反馈：13人(总26)覆盖率76/78，少了。
+        // 目标是全覆盖，所以增加到 14-15人(总27-28)。
+        const minCalc = calculatePeople(3, 0.77); 
+
+        // 2. 均衡模式 (Balanced): Max 3
+        // 效率因子 0.73 (原0.78 -> 人均 2.19 任务)
+        // 63 / 2.19 = 28.7 -> 29人
+        // 保持比最少多1人的梯度
+        const balancedCalc = calculatePeople(3, 0.73);
+        
+        // 3. 最多模式 (Max): Max 2
+        // 效率因子 0.96 (原1.0 -> 0.96, 人均 1.92 任务)
+        // 63 / 1.92 = 32.8 -> 33人
+        // 用户反馈：32人时还需招19人(总32) 覆盖率少了一个。要20人(总33)。
+        const maxCalc = calculatePeople(2, 0.96);
+
+        // --- DEPT B 计算 (不变) ---
         const minDeptBPerGroup = Math.ceil(5 / 2.5);
         const maxDeptBPerGroup = 5;
         const minDeptB = minDeptBPerGroup * numGroups;
@@ -115,13 +173,13 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
         
         return {
             deptA: { 
-                min: minTotal,
-                balanced: balancedTotal,
-                max: maxTotal,
+                min: minCalc.total,
+                balanced: balancedCalc.total, 
+                max: maxCalc.total,
                 gradeDistribution: {
-                    min: { g1: minG1, g2: minG2 },
-                    balanced: { g1: balancedG1, g2: balancedG2 },
-                    max: { g1: maxG1, g2: maxG2 }
+                    min: { g1: minCalc.g1, g2: minCalc.g2 },
+                    balanced: { g1: balancedCalc.g1, g2: balancedCalc.g2 },
+                    max: { g1: maxCalc.g1, g2: maxCalc.g2 }
                 }
             },
             deptB: { min: minDeptB, max: maxDeptB }
@@ -142,6 +200,30 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
             }
         };
     }, [needs, stats]);
+
+    // 4. 计算覆盖率预估 (根据历史经验)
+    // Max 3 模式下，单人贡献约 2.4 任务 (Efficiency 0.8)
+    // Max 2 模式下，单人贡献约 1.95 任务 (Efficiency 0.97)
+    // 总任务分母修正为 78
+    const estimateCoverage = (deptATarget: number, maxLoad: number) => {
+        // 根据新的计算逻辑微调预估效率
+        // Max 3: 0.85 -> 99%
+        // Max 2: 0.98 -> 99%
+        const efficiency = maxLoad === 3 ? 0.85 : 0.96; 
+        const capacityA = deptATarget * maxLoad * efficiency;
+        const coveredA = Math.min(63, capacityA);
+        
+        const coveredB = Math.min(15, stats.deptB.total * 3); 
+        
+        const totalCovered = coveredA + coveredB;
+        return Math.floor((totalCovered / 78) * 100);
+    };
+
+    const coverage = {
+        min: estimateCoverage(needs.deptA.min, 3),
+        balanced: estimateCoverage(needs.deptA.balanced, 3),
+        max: estimateCoverage(needs.deptA.max, 2)
+    };
 
     return (
         <Modal
@@ -239,7 +321,7 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                                         <span className="font-bold text-red-600">{needs.deptA.min} 人</span>
                                     </div>
                                     <div className="text-xs text-gray-500 mb-2">
-                                        覆盖率约60-70%，建议高一{needs.deptA.gradeDistribution?.min.g1}人 + 高二{needs.deptA.gradeDistribution?.min.g2}人
+                                        覆盖率约{coverage.min}%，建议高一{needs.deptA.gradeDistribution?.min.g1}人 + 高二{needs.deptA.gradeDistribution?.min.g2}人
                                     </div>
                                     <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
                                         <div 
@@ -260,11 +342,12 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                                     <button
                                         onClick={() => onPreview({
                                             deptATarget: needs.deptA.min,
-                                            deptBTarget: stats.deptB.total // 保持现有人数
+                                            deptBTarget: stats.deptB.total, // 保持现有人数
+                                            maxTasksPerPerson: 3
                                         })}
                                         className="mt-2 w-full py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs rounded border border-red-200 transition flex items-center justify-center gap-1"
                                     >
-                                        <Users size={12}/> 生成最少配置排班预览
+                                        <Users size={12}/> 生成最少配置排班预览 (Max 3)
                                     </button>
                                 </div>
 
@@ -275,7 +358,7 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                                         <span className="font-bold text-gray-800 text-lg">{needs.deptA.balanced} 人</span>
                                     </div>
                                     <div className="text-xs text-gray-500 mb-2">
-                                        覆盖率约85-90%，建议高一{needs.deptA.gradeDistribution?.balanced.g1}人 + 高二{needs.deptA.gradeDistribution?.balanced.g2}人
+                                        覆盖率约{coverage.balanced}%，建议高一{needs.deptA.gradeDistribution?.balanced.g1}人 + 高二{needs.deptA.gradeDistribution?.balanced.g2}人
                                     </div>
                                     {analysis.deptA.balanced > 0 ? (
                                         <p className="text-xs text-purple-600 mt-1 flex items-center gap-1">
@@ -289,11 +372,12 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                                     <button
                                         onClick={() => onPreview({
                                             deptATarget: needs.deptA.balanced,
-                                            deptBTarget: stats.deptB.total // 保持现有人数
+                                            deptBTarget: stats.deptB.total, // 保持现有人数
+                                            maxTasksPerPerson: 3
                                         })}
                                         className="mt-2 w-full py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs rounded border border-purple-200 transition flex items-center justify-center gap-1 font-medium"
                                     >
-                                        <Star size={12}/> 生成均衡排班预览
+                                        <Star size={12}/> 生成均衡排班预览 (Max 3)
                                     </button>
                                 </div>
 
@@ -304,7 +388,7 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                                         <span className="font-bold text-gray-600">{needs.deptA.max} 人</span>
                                     </div>
                                     <div className="text-xs text-gray-500 mb-2">
-                                        覆盖率100%，建议高一{needs.deptA.gradeDistribution?.max.g1}人 + 高二{needs.deptA.gradeDistribution?.max.g2}人
+                                        覆盖率约{coverage.max}%，建议高一{needs.deptA.gradeDistribution?.max.g1}人 + 高二{needs.deptA.gradeDistribution?.max.g2}人
                                     </div>
                                     {stats.deptA.total < needs.deptA.max ? (
                                         <p className="text-xs text-blue-600 mt-1">
@@ -318,11 +402,12 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                                      <button
                                         onClick={() => onPreview({
                                             deptATarget: needs.deptA.max,
-                                            deptBTarget: stats.deptB.total // 保持现有人数，不增加
+                                            deptBTarget: stats.deptB.total, // 保持现有人数，不增加
+                                            maxTasksPerPerson: 2
                                         })}
                                         className="mt-2 w-full py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 text-xs rounded border border-gray-200 transition flex items-center justify-center gap-1"
                                     >
-                                        <Users size={12}/> 生成完全覆盖排班预览
+                                        <Users size={12}/> 生成完全覆盖排班预览 (Max 2)
                                     </button>
                                 </div>
                             </div>
@@ -395,15 +480,15 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                         <li>
                             <strong>纪检/学习部 (核心部门):</strong> 
                             <span className="font-bold text-red-600 mx-1">
-                                最少 {needs.deptA.min} 人 (覆盖率约60-70%)
+                                最少 {needs.deptA.min} 人 (覆盖率约{coverage.min}%)
                             </span> 
                             ~ 
                             <span className="font-bold text-purple-600 mx-1">
-                                推荐 {needs.deptA.balanced} 人 (覆盖率约85-90%)
+                                推荐 {needs.deptA.balanced} 人 (覆盖率约{coverage.balanced}%)
                             </span>
                             ~ 
                             <span className="font-bold text-gray-600 mx-1">
-                                最多 {needs.deptA.max} 人 (覆盖率100%)
+                                最多 {needs.deptA.max} 人 (覆盖率约{coverage.max}%)
                             </span>
                             。
                         </li>

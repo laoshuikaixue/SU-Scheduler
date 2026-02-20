@@ -122,7 +122,7 @@ const App: React.FC = () => {
         setAssignments(newAssignments);
     };
 
-    const handleRecruitmentPreview = async (plan: { deptATarget: number, deptBTarget: number }) => {
+    const handleRecruitmentPreview = async (plan: { deptATarget: number, deptBTarget: number, maxTasksPerPerson?: number }) => {
         // 1. Backup current state
         setPreviewBackup({
             students,
@@ -190,7 +190,10 @@ const App: React.FC = () => {
                     setLogs(prev => [...prev, log]);
                     if (newStats) setStats(newStats);
                 },
-                { enableTemporaryMode: isTemporaryMode }
+                { 
+                    enableTemporaryMode: isTemporaryMode,
+                    maxTasksPerPerson: plan.maxTasksPerPerson // Pass the dynamic max load constraint
+                }
             );
             
             // Update assignments and history
@@ -1114,7 +1117,7 @@ const App: React.FC = () => {
                             footer.style.fontSize = '12px';
 
                             const powerBy = clonedDoc.createElement('span');
-                            powerBy.innerText = 'Powered By LaoShui @ 2025 | 学生会检查编排系统 | 舟山市六横中学';
+                            powerBy.innerText = 'Powered By LaoShui @ 2025 - 2026 | 学生会检查编排系统 | 舟山市六横中学';
                             footer.appendChild(powerBy);
 
                             const time = clonedDoc.createElement('span');
@@ -1376,7 +1379,7 @@ const App: React.FC = () => {
             </div>
 
             <footer className="bg-white border-t py-2 px-6 text-center text-xs text-gray-400 shrink-0">
-                Powered By LaoShui @ 2025 | 学生会检查编排系统 | 舟山市六横中学
+                Powered By LaoShui @ 2025 - 2026 | 学生会检查编排系统 | 舟山市六横中学
             </footer>
 
             {toast && (
