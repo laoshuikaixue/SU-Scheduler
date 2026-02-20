@@ -7,6 +7,13 @@ export interface SchedulerOptions {
 
 // 检查学生是否符合任务的基础硬性要求（部门、年级、避嫌）
 export const canAssign = (student: Student, task: TaskDefinition, options?: SchedulerOptions): { valid: boolean; reason?: string } => {
+    // 0. 组长特权逻辑：组长只负责课间操室外点位1 (ex-out-1)，且不参与其他任务
+    if (student.isLeader) {
+        if (task.id !== 'ex-out-1') {
+            return {valid: false, reason: '组长仅负责课间操点位1'};
+        }
+    }
+
     // 1. 部门职责检查
     if (!task.allowedDepartments.includes(student.department)) {
         // 临时模式：允许主席团检查包干区
@@ -41,12 +48,14 @@ export const canAssign = (student: Student, task: TaskDefinition, options?: Sche
         }
     }
 
-    // 3. 包干区任务仅限高二学生
+    // 3. 包干区任务 (移除年级限制，高一高二均可)
+    /*
     if (task.category === TaskCategory.CLEANING) {
         if (student.grade !== 2) {
             return {valid: false, reason: '包干区仅限高二'};
         }
     }
+    */
 
     // 4. 上午眼保健操高三不参与检查
     if (task.timeSlot === TimeSlot.EYE_AM && student.grade === 3) {
@@ -663,12 +672,10 @@ export const autoScheduleMultiGroup = (
                     // 1. 优先负载最低
                     if (loadA !== loadB) return loadA - loadB;
 
-                    // 2. 包干区偏好: 高二 > 高三 > 高一
+                    // 2. 包干区偏好: 非高三优先 (高一高二平等)
                     if (task.category === TaskCategory.CLEANING) {
-                        if (a.grade === 2 && b.grade !== 2) return -1;
-                        if (b.grade === 2 && a.grade !== 2) return 1;
-                        if (a.grade === 3 && b.grade !== 3) return -1;
-                        if (b.grade === 3 && a.grade !== 3) return 1;
+                        if (a.grade !== 3 && b.grade === 3) return -1;
+                        if (b.grade !== 3 && a.grade === 3) return 1;
                     }
 
                     // 3. 眼操偏好: 优先给已有包干区的人 (凑成组合)
@@ -880,15 +887,66 @@ export const autoScheduleMultiGroupAsync = async (
 
                     // 预测新任务带来的负载变化
                     let loadIncrement = 1;
-                    if (task.category === TaskCategory.EYE_EXERCISE && 
-                        task.subCategory === '上午' && 
-                        task.name.includes('高一') && 
-                        studentG1EyeCounts[student.id] >= 1) {
-                        loadIncrement = 0;
-                    }
+                    // 用户新规：禁止一人检查两个分段，即禁止眼操合并
+                    // 所以眼操不再有 loadIncrement = 0 的优惠
+                    // if (task.category === TaskCategory.EYE_EXERCISE && ...) { loadIncrement = 0; }
                     
                     const futureEffectiveLoad = effectiveLoad + loadIncrement;
                     const futureNonEyeCount = studentNonEyeCounts[student.id] + (task.category !== TaskCategory.EYE_EXERCISE ? 1 : 0);
+
+                    // 0. 包干区特例：包干区任务较重，如果有包干区，严格限制有效负载 <= 2
+                    // 防止出现 "包干区 + 上午眼操 + 下午眼操" 的高负荷情况
+                    const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
+                    const isCleaningTask = task.category === TaskCategory.CLEANING;
+                    
+                    if (hasCleaning || isCleaningTask) {
+                        // 绝对禁止 > 2 个任务 (即使是合并眼操也不行)
+                        const currentRawLoad = groupWorkload[student.id];
+                        // 注意：这里必须是严格的物理计数，不能用 effectiveLoad
+                        const futureRawLoad = currentRawLoad + 1;
+                        
+                        // 允许的唯一组合是：包干区(1) + 其他(1) = 2
+                        if (futureRawLoad > 2) return false;
+                        
+                        // 特别针对 "包干区 + 2个眼操" 的情况进行拦截
+                        if (task.category === TaskCategory.EYE_EXERCISE) {
+                              // 如果已有眼操任务，无论数量，禁止再加眼操
+                              // 这里必须用 studentCategories 结合 groupWorkload 来判断
+                              // 因为 studentCategories.has(EYE) 只要有1个就是true
+                              
+                              // 如果有眼操，且当前任务也是眼操 -> 禁止
+                              if (studentCategories[student.id].has(TaskCategory.EYE_EXERCISE)) {
+                                  return false;
+                              }
+                        }
+                        
+                        if (task.category === TaskCategory.CLEANING) {
+                             // 如果正在分配包干区，且已经有 >= 2 个任务 -> 禁止
+                             if (currentRawLoad >= 2) return false;
+                             // 如果已有 >= 1 个眼操，且正在分配包干区 -> 允许（只要总数<=2）
+                             // 但如果已有 >= 2 个眼操 -> 禁止
+                             // 怎么知道眼操数量？
+                             // currentRawLoad - studentNonEyeCounts
+                             // 但 studentNonEyeCounts 还没包含当前的包干区
+                             // 简单点：如果 rawLoad >= 2，肯定不行
+                             
+                             // 还需要防止：已有 2 个眼操，再加包干区
+                             // 此时 currentRawLoad = 2. futureRawLoad = 3 > 2. 已被上面拦截。
+                             
+                             // 防止：已有 1 眼操 + 1 其他，再加包干区 -> 3 > 2. 已拦截。
+                             
+                             // 唯一漏洞：
+                             // 如果 currentRawLoad = 1 (是眼操). future = 2. 允许。
+                             // 如果 currentRawLoad = 1 (是晚自习). future = 2. 允许。
+                             
+                             // 为什么用户说还有 "包干 + 上午眼 + 下午眼"？
+                             // 这意味着 rawLoad = 3.
+                             // 难道 groupWorkload[student.id] 统计有误？
+                             // 或者是 "强力重试" 逻辑绕过了这里的检查？
+                             
+                             // 检查下方的 "强力重试" 逻辑
+                        }
+                    }
 
                     // 允许有效负载达到 3，但必须满足：非眼操任务最多 1 个
                     if (futureEffectiveLoad > 3) return false;
@@ -900,7 +958,6 @@ export const autoScheduleMultiGroupAsync = async (
                     if (!isIndoorInterval && studentTimeSlots[student.id].has(task.timeSlot)) return false;
                     if (!canAssign(student, task).valid) return false;
 
-                    const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
                     const hasEvening = studentCategories[student.id].has(TaskCategory.EVENING_STUDY);
                     if (task.category === TaskCategory.EVENING_STUDY && hasCleaning) return false;
                     if (task.category === TaskCategory.CLEANING && hasEvening) return false;
@@ -915,6 +972,22 @@ export const autoScheduleMultiGroupAsync = async (
                         if (!canAssign(student, task, options).valid) return false;
                         const hasCleaning = studentCategories[student.id].has(TaskCategory.CLEANING);
                         const hasEvening = studentCategories[student.id].has(TaskCategory.EVENING_STUDY);
+                        
+                        // 1. 如果有包干区，直接拒绝 (因为 groupWorkload 肯定是 >= 1，再加眼操就是 >= 2，违反了 "包干区+1眼" 的限制)
+                        // 等等，允许 "包干区+1眼"。此时 workload=1.
+                        // 如果 workload=1 (是包干区)，加眼操 -> workload=2. 允许。
+                        // 如果 workload=2 (包干区+1眼)，加眼操 -> workload=3. 禁止。
+                        
+                        // 但上文的 `canAssign` 应该已经拦截了。这里是 fallback 逻辑？
+                        // 不，这里是 `candidates.length === 0` 时的重试逻辑。
+                        // 如果上面的 filter 都没过，这里会放宽条件重试。
+                        // 必须在这里也加上包干区的限制！
+                        
+                        if (hasCleaning) {
+                            if (groupWorkload[student.id] >= 2) return false; // 已有包干+1眼，禁止再加
+                            if (studentCategories[student.id].has(TaskCategory.EYE_EXERCISE)) return false; // 已有眼操，禁止再加
+                        }
+
                         if (hasEvening) return false;
                         if (groupWorkload[student.id] === 2 && !studentCategories[student.id].has(TaskCategory.EYE_EXERCISE)) return false;
                         if (groupWorkload[student.id] >= 3) return false;
@@ -923,24 +996,10 @@ export const autoScheduleMultiGroupAsync = async (
                 }
 
                 // 强力重试 - 允许合并高一上午眼操
-                if (candidates.length === 0 && task.category === TaskCategory.EYE_EXERCISE && 
-                    task.subCategory === '上午' && task.name.includes('高一')) {
-                    
-                    candidates = groupStudents.filter(student => {
-                        if (!canAssign(student, task, options).valid) return false;
-                        if (groupWorkload[student.id] >= 4) return false;
-                        // 忽略时间冲突（视为合并）
-                        return true;
-                    });
-
-                    // 优先给已有眼操任务的人
-                    candidates.sort((a, b) => {
-                        const hasA = studentCategories[a.id].has(TaskCategory.EYE_EXERCISE) ? 1 : 0;
-                        const hasB = studentCategories[b.id].has(TaskCategory.EYE_EXERCISE) ? 1 : 0;
-                        if (hasA !== hasB) return hasB - hasA;
-                        return groupWorkload[a.id] - groupWorkload[b.id];
-                    });
-                }
+                // 用户明确禁止一人同时间段检查两个分段，所以这里的合并逻辑必须移除或修改
+                // if (candidates.length === 0 && task.category === TaskCategory.EYE_EXERCISE && 
+                //    task.subCategory === '上午' && task.name.includes('高一')) { ... }
+                // 暂时注释掉这段逻辑以满足用户需求
 
                 // 室内课间操特例：允许一人多层
                 if (candidates.length === 0 && task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内') {
@@ -957,6 +1016,8 @@ export const autoScheduleMultiGroupAsync = async (
                 }
 
                 // 高一上午眼保健操 - 默认尝试合并 (捆绑 1-3 和 4-6)
+                // 用户明确禁止合并，此处也需移除
+                /* 
                 if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
                      const otherHalf = task.name.includes('1-3') ? '4-6' : '1-3';
                      const holder = groupStudents.find(s => {
@@ -974,6 +1035,7 @@ export const autoScheduleMultiGroupAsync = async (
                          }
                      }
                 }
+                */
 
                 // 尝试跨组借调 (临时模式 + 包干区)
                 if (candidates.length === 0 && 
@@ -1063,8 +1125,9 @@ export const autoScheduleMultiGroupAsync = async (
                          if (!hasA && hasB) return 1;
                     }
                     
-                    // 1. 负载均衡
+                    // 1. 负载均衡 (优先有效负载低，其次真实负载低)
                     if (loadA !== loadB) return loadA - loadB;
+                    if (groupWorkload[a.id] !== groupWorkload[b.id]) return groupWorkload[a.id] - groupWorkload[b.id];
 
                     // 2. 年级偏好
                     // 优先让高三检查课间操室外和晚自习
@@ -1076,10 +1139,8 @@ export const autoScheduleMultiGroupAsync = async (
                         if (b.grade === 2 && a.grade !== 2) return 1;
                     }
 
-                    // 高二优先检查包干区
+                    // 高二优先检查包干区 (移除限制: 高一高二平等)
                     if (task.category === TaskCategory.CLEANING) {
-                        if (a.grade === 2 && b.grade !== 2) return -1;
-                        if (b.grade === 2 && a.grade !== 2) return 1;
                         if (a.grade !== 3 && b.grade === 3) return -1;
                         if (b.grade !== 3 && a.grade === 3) return 1;
                     }

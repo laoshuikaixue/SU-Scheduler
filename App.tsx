@@ -34,6 +34,7 @@ import saveAs from 'file-saver';
 // @ts-ignore
 import {pinyin} from 'pinyin-pro';
 import Modal from './components/Modal';
+import RecruitmentAnalysisModal from './components/RecruitmentAnalysisModal';
 import {SuggestionsPanel} from './components/SuggestionsPanel';
 import SwapModal from './components/SwapModal';
 import { SwapProposal } from './services/swapService';
@@ -62,7 +63,14 @@ const App: React.FC = () => {
     const [stats, setStats] = useState<CalculationStats | undefined>(undefined);
     const [isCalculating, setIsCalculating] = useState(false);
     const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
+    const [isAnalysisModalOpen, setIsAnalysisModalOpen] = useState(false);
     const [isTemporaryMode, setIsTemporaryMode] = useState(false);
+    const [previewBackup, setPreviewBackup] = useState<{
+        students: Student[],
+        assignments: Record<string, string>,
+        history: Record<string, string>[],
+        historyIndex: number
+    } | null>(null);
 
     const conflicts = getScheduleConflicts(students, assignments, groupCount, { enableTemporaryMode: isTemporaryMode });
     const suggestions = getSuggestions(students, conflicts, assignments, { enableTemporaryMode: isTemporaryMode });
@@ -112,6 +120,167 @@ const App: React.FC = () => {
         setHistory(newHistory);
         setHistoryIndex(newHistory.length - 1);
         setAssignments(newAssignments);
+    };
+
+    const handleRecruitmentPreview = async (plan: { deptATarget: number, deptBTarget: number }) => {
+        // 1. Backup current state
+        setPreviewBackup({
+            students,
+            assignments,
+            history,
+            historyIndex
+        });
+
+        // 2. Prepare base students (remove Grade 3)
+        const baseStudents = students.filter(s => s.grade !== 3);
+        
+        // 3. Calculate recruits needed
+        // Dept A: Discipline, Study
+        const deptAStudents = baseStudents.filter(s => [Department.DISCIPLINE, Department.STUDY].includes(s.department));
+        // Dept B: Chairman, Art, Clubs, Sports
+        const deptBStudents = baseStudents.filter(s => [Department.CHAIRMAN, Department.ART, Department.CLUBS, Department.SPORTS].includes(s.department));
+        
+        const recruitsA = Math.max(0, plan.deptATarget - deptAStudents.length);
+        const recruitsB = Math.max(0, plan.deptBTarget - deptBStudents.length);
+        
+        // 4. Generate mock students
+        const newStudents = [...baseStudents];
+        
+        // Helper to add students
+        const addRecruits = (count: number, dept: Department, prefix: string) => {
+            for (let i = 0; i < count; i++) {
+                const id = `mock-${prefix}-${i + 1}`;
+                newStudents.push({
+                    id,
+                    name: `拟招${prefix}${i + 1}`,
+                    department: dept,
+                    grade: 1, // Default to Grade 1 as requested
+                    classNum: 1,
+                    pinyinInitials: `NZ${prefix}${i+1}`,
+                    isLeader: false
+                });
+            }
+        };
+
+        if (recruitsA > 0) addRecruits(recruitsA, Department.DISCIPLINE, '纪检');
+        if (recruitsB > 0) addRecruits(recruitsB, Department.ART, '文宣'); // Default to Art for Dept B
+
+        // 5. Update state
+        setStudents(newStudents);
+        setAssignments({});
+        // Reset history for preview mode to avoid confusion
+        const initialHistory = [{}]; 
+        setHistory(initialHistory);
+        setHistoryIndex(0);
+        
+        setIsAnalysisModalOpen(false);
+        showToast(`已进入预览模式：新增 ${recruitsA + recruitsB} 名模拟新生`);
+
+        // 6. Trigger auto schedule directly
+        setIsCalculating(true);
+        setLogs(['>>> 预览模式初始化...', '>>> 生成模拟数据...', '>>> 开始智能编排...']);
+        setStats(undefined);
+        
+        try {
+             const newSchedule = await autoScheduleMultiGroupAsync(
+                newStudents, 
+                {},
+                groupCount,
+                (log, newStats) => {
+                    setLogs(prev => [...prev, log]);
+                    if (newStats) setStats(newStats);
+                },
+                { enableTemporaryMode: isTemporaryMode }
+            );
+            
+            // Update assignments and history
+            
+            // 7. Post-process: Rename mock students based on schedule order
+            // Strategy: 
+            // Iterate through each group (0 to groupCount-1).
+            // For each group, list tasks in a predefined order (e.g., Cleaning -> Outdoor -> Eye AM -> Eye PM -> Evening).
+            // Find the mock student assigned to each task.
+            // Assign a new name like "拟招-纪检-G1-01" (Group 1, Student 1).
+            
+            // Task order definition
+            const taskOrder = [
+                'clean-out', 'clean-in-1', 'clean-in-2', 'clean-check-1', 'clean-check-2', // Cleaning
+                'ex-out-1', 'ex-out-2', 'ex-out-3', // Outdoor
+                'eye-am-g1-a', 'eye-am-g1-b', 'eye-am-g2-a', 'eye-am-g2-b', // Eye AM
+                'eye-pm-g1-a', 'eye-pm-g1-b', 'eye-pm-g2-a', 'eye-pm-g2-b', 'eye-pm-g3-a', 'eye-pm-g3-b', // Eye PM
+                'eve-g1', 'eve-g2', 'eve-g3' // Evening
+            ];
+
+            const renamedStudents = [...newStudents];
+            const renamedAssignments = {...newSchedule};
+            const mockStudentMap = new Map<string, string>(); // oldId -> newName
+            
+            // We need to process each group separately because students are rotated.
+            // But wait, students are statically assigned to groups?
+            // Yes, `distributeStudentsToGroups` assigns students to groups.
+            // And `autoSchedule` respects that.
+            // So we can just iterate through students in each group and rename them?
+            // No, the user wants "top to bottom" order in the schedule table.
+            // The schedule table displays tasks in rows.
+            // So for Group X (which corresponds to a column/day), we look at the tasks from top to bottom.
+            
+            // Let's create a mapping of old_mock_id -> new_name
+            // Since a student might appear multiple times in a group (e.g. 2 tasks), we name them on their first appearance.
+            
+            // Note: The schedule has `taskId::groupIndex`.
+            // We iterate groups 0 to groupCount-1.
+            // Inside each group, we iterate tasks in `taskOrder`.
+            
+            const processedStudents = new Set<string>();
+ 
+             for (let g = 0; g < groupCount; g++) {
+                 let groupCounter = 1;
+                 for (const taskId of taskOrder) {
+                     const key = `${taskId}::${g}`;
+                     const studentId = newSchedule[key];
+                     
+                     if (studentId && studentId.startsWith('mock-') && !processedStudents.has(studentId)) {
+                         // Found a new mock student assigned to this group
+                         const student = renamedStudents.find(s => s.id === studentId);
+                         if (student) {
+                             // Rename based on Group and Order
+                             // Group A (0) -> 拟招A01, 拟招A02...
+                             // Group B (1) -> 拟招B01, 拟招B02...
+                             
+                             const groupName = String.fromCharCode(65 + g); // A, B, C...
+                             const newName = `拟招${groupName}${String(groupCounter).padStart(2, '0')}`;
+                             
+                             student.name = newName;
+                             processedStudents.add(studentId);
+                             groupCounter++;
+                         }
+                     }
+                 }
+             }
+            
+            setStudents(renamedStudents);
+            setAssignments(renamedAssignments);
+            setHistory([renamedAssignments]);
+            setHistoryIndex(0);
+            
+            showToast('预览排班完成 (已重命名)');
+        } catch (error) {
+            console.error(error);
+            showToast('预览编排失败', 'error');
+        } finally {
+            setTimeout(() => setIsCalculating(false), 1000);
+        }
+    };
+
+    const exitPreviewMode = () => {
+        if (previewBackup) {
+            setStudents(previewBackup.students);
+            setAssignments(previewBackup.assignments);
+            setHistory(previewBackup.history);
+            setHistoryIndex(previewBackup.historyIndex);
+            setPreviewBackup(null);
+            showToast('已退出预览模式，恢复原始数据');
+        }
     };
 
     const handleUndo = () => {
@@ -1055,6 +1224,16 @@ const App: React.FC = () => {
                         )}
                     </div>
 
+
+                    {previewBackup && (
+                        <button
+                            onClick={exitPreviewMode}
+                            className="flex items-center gap-2 px-3 py-2 bg-red-600 hover:bg-red-700 text-white rounded-md text-sm transition shadow-sm whitespace-nowrap animate-pulse"
+                        >
+                            <Undo2 size={16}/> 退出预览模式
+                        </button>
+                    )}
+
                     <button
                         onClick={downloadTemplate}
                         className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition whitespace-nowrap"
@@ -1088,6 +1267,13 @@ const App: React.FC = () => {
                         className="flex items-center gap-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 rounded-md text-sm transition whitespace-nowrap"
                     >
                         <FileJson size={16}/> 导入数据
+                    </button>
+
+                    <button
+                        onClick={() => setIsAnalysisModalOpen(true)}
+                        className="flex items-center gap-2 px-3 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-md text-sm transition shadow-sm whitespace-nowrap"
+                    >
+                        <Users size={16}/> 空缺分析
                     </button>
 
                     <div className="h-6 w-px bg-gray-300 mx-2"></div>
@@ -1216,6 +1402,13 @@ const App: React.FC = () => {
                         onClick: () => handleUndoRef.current()
                     });
                 }}
+            />
+
+            <RecruitmentAnalysisModal
+                isOpen={isAnalysisModalOpen}
+                onClose={() => setIsAnalysisModalOpen(false)}
+                students={students}
+                onPreview={handleRecruitmentPreview}
             />
 
             <Modal

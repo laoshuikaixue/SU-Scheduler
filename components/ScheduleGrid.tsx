@@ -428,6 +428,9 @@ const CellInput: React.FC<{
         return `${formatClassName(s.grade, s.classNum)} ${s.name}`;
     };
 
+    const isMock = value?.id.startsWith('mock-');
+    const textColor = !isValid ? 'text-red-600' : (isMock ? 'text-green-600 font-bold' : 'text-gray-900');
+
     return (
         <div className="relative h-full w-full p-1 min-h-[40px] flex items-center justify-center">
             {value && !isEditing ? (
@@ -442,7 +445,7 @@ const CellInput: React.FC<{
                 >
                     <div
                         className="flex flex-col items-center leading-tight pointer-events-none"> {/* 文本上的指针事件设为none以确保拖拽命中父元素 */}
-                        <span className={`text-sm font-medium ${isValid ? 'text-gray-900' : 'text-red-600'}`}>
+                        <span className={`text-sm font-medium ${textColor}`}>
               {getDisplayName(value)}
             </span>
                         {!isValid &&
