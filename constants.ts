@@ -149,6 +149,7 @@ export const ALL_TASKS: TaskDefinition[] = [
 
     // --- 3. 眼保健操 ---
     // 上午: 高一, 高二. 下午: 高一, 高二, 高三. 分为 1-3, 4-6 班组.
+    /* 上午眼操项目已下线
     ...[1, 2].flatMap(grade => [
         {
             id: `eye-am-g${grade}-a`,
@@ -169,6 +170,7 @@ export const ALL_TASKS: TaskDefinition[] = [
             forbiddenClassGroup: {grade, minClass: 4, maxClass: 6}
         }
     ]),
+    */
     ...[1, 2, 3].flatMap(grade => [
         {
             id: `eye-pm-g${grade}-a`,
