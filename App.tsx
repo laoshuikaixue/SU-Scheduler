@@ -122,7 +122,7 @@ const App: React.FC = () => {
         setAssignments(newAssignments);
     };
 
-    const handleRecruitmentPreview = async (plan: { deptATarget: number, deptBTarget: number, maxTasksPerPerson?: number }) => {
+    const handleRecruitmentPreview = async (plan: { deptATarget: number, deptBTarget: number, maxTasksPerPerson?: number, g2Count?: number }) => {
         // 1. Backup current state
         setPreviewBackup({
             students,
@@ -143,27 +143,37 @@ const App: React.FC = () => {
         const recruitsA = Math.max(0, plan.deptATarget - deptAStudents.length);
         const recruitsB = Math.max(0, plan.deptBTarget - deptBStudents.length);
         
+        // Determine Grade distribution for Dept A recruits
+        // If g2Count is provided (from user input), use it. Otherwise rely on calculation logic (though we expect input now)
+        // Ensure g2Recruits doesn't exceed total recruitsA
+        const g2Recruits = plan.g2Count !== undefined ? Math.min(plan.g2Count, recruitsA) : 0;
+        const g1Recruits = Math.max(0, recruitsA - g2Recruits);
+
         // 4. Generate mock students
         const newStudents = [...baseStudents];
         
         // Helper to add students
-        const addRecruits = (count: number, dept: Department, prefix: string) => {
+        const addRecruits = (count: number, dept: Department, prefix: string, grade: number = 1) => {
             for (let i = 0; i < count; i++) {
-                const id = `mock-${prefix}-${i + 1}`;
+                const id = `mock-${prefix}-g${grade}-${i + 1}`;
                 newStudents.push({
                     id,
-                    name: `拟招${prefix}${i + 1}`,
+                    name: `拟招${grade === 2 ? '二' : '一'}${prefix}${i + 1}`, // e.g. 拟招二纪检1
                     department: dept,
-                    grade: 1, // Default to Grade 1 as requested
-                    classNum: 1,
-                    pinyinInitials: `NZ${prefix}${i+1}`,
+                    grade: grade,
+                    classNum: 1, // Default class
+                    pinyinInitials: `NZ${prefix}G${grade}${i+1}`,
                     isLeader: false
                 });
             }
         };
 
-        if (recruitsA > 0) addRecruits(recruitsA, Department.DISCIPLINE, '纪检');
-        if (recruitsB > 0) addRecruits(recruitsB, Department.ART, '文宣'); // Default to Art for Dept B
+        // Add Dept A recruits (Grade 2 then Grade 1)
+        if (g2Recruits > 0) addRecruits(g2Recruits, Department.DISCIPLINE, '纪检', 2);
+        if (g1Recruits > 0) addRecruits(g1Recruits, Department.DISCIPLINE, '纪检', 1);
+
+        // Add Dept B recruits (Default to Grade 1)
+        if (recruitsB > 0) addRecruits(recruitsB, Department.ART, '文宣', 1);
 
         // 5. Update state
         setStudents(newStudents);
@@ -174,7 +184,7 @@ const App: React.FC = () => {
         setHistoryIndex(0);
         
         setIsAnalysisModalOpen(false);
-        showToast(`已进入预览模式：新增 ${recruitsA + recruitsB} 名模拟新生`);
+        showToast(`已进入预览模式：新增 ${recruitsA + recruitsB} 名模拟新生 (高一${g1Recruits}人, 高二${g2Recruits}人)`);
 
         // 6. Trigger auto schedule directly
         setIsCalculating(true);
@@ -192,7 +202,7 @@ const App: React.FC = () => {
                 },
                 { 
                     enableTemporaryMode: isTemporaryMode,
-                    maxTasksPerPerson: plan.maxTasksPerPerson // Pass the dynamic max load constraint
+                    maxTasksPerPerson: plan.maxTasksPerPerson 
                 }
             );
             

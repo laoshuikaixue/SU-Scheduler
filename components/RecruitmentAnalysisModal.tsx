@@ -7,7 +7,7 @@ interface Props {
     isOpen: boolean;
     onClose: () => void;
     students: Student[];
-    onPreview: (plan: { deptATarget: number, deptBTarget: number, maxTasksPerPerson?: number }) => void;
+    onPreview: (plan: { deptATarget: number, deptBTarget: number, maxTasksPerPerson?: number, g2Count?: number }) => void;
 }
 
 // 部门定义
@@ -68,6 +68,23 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
         return count;
     }, [students]);
 
+    // 新增：高二人数输入状态
+    const [g2Input, setG2Input] = useState<{
+        min: string,
+        balanced: string,
+        max: string
+    }>({ min: '', balanced: '', max: '' });
+
+    // 处理输入变化
+    const handleG2InputChange = (mode: 'min' | 'balanced' | 'max', value: string) => {
+        setG2Input(prev => ({ ...prev, [mode]: value }));
+    };
+
+    // 获取当前模式建议的高二招聘人数
+    const getSuggestedG2Recruit = (mode: 'min' | 'balanced' | 'max') => {
+        return analysis.deptA[mode].g2;
+    };
+
     // 2. 需求计算（基于避嫌规则的精确分析）
     const needs = useMemo(() => {
         // --- DEPT A 计算 ---
@@ -104,37 +121,32 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
         const totalMustG2 = tasksPerGroup.mustG2 * numGroups;
 
         // 动态规划求解最少人数
-        // minimize P = P_g1 + P_g2
-        // subject to:
-        // 1. P_g1 * k >= totalMustG1 + assigned_any_to_g1
-        // 2. P_g2 * k >= totalMustG2 + assigned_any_to_g2
-        // 3. assigned_any_to_g1 + assigned_any_to_g2 = totalAny
-        // Simplifies to: (P_g1 + P_g2) * k >= totalTasks
-        // AND P_g1 >= ceil(totalMustG1 / k)
-        // AND P_g2 >= ceil(totalMustG2 / k)
-
+        // 目标：最小化总人数 P = P_g1 + P_g2
+        // 约束：
+        // 1. 高一总产能 >= 高一必须承担的任务 + 分配给高一的机动任务
+        // 2. 高二总产能 >= 高二必须承担的任务 + 分配给高二的机动任务
+        // 3. 总产能 >= 总任务数
+        // 简化模型：(P_g1 + P_g2) * 效率 * 负载 >= 总任务数
         const calculatePeople = (maxLoad: number, efficiency: number = 0.85) => {
             // 引入效率因子 (Efficiency Factor)
             // 理论负载 maxLoad 在实际排班中很难 100% 达成（受限于互斥、时间冲突、年级避嫌）
-            // 经验值：Max 3 模式下，有效负载约 2.4-2.5；Max 2 模式下，有效负载约 1.8-1.9
             const effectiveLoad = maxLoad * efficiency;
             
             const effectiveTotal = Math.ceil(totalTasks); // 任务总数不变
             
-            // 基础约束：按有效负载反推人数
+            // 基础约束：按有效负载反推总人数
             let minTotal = Math.ceil(effectiveTotal / effectiveLoad);
             
             // 年级约束：必须满足硬性任务 (Hard Constraints)
-            // 硬性任务必须有人做，这里保守一点，按 maxLoad 计算最低门槛，再按比例分配总人数
-            // 或者：硬性任务也受效率影响
+            // 硬性任务必须有人做，按有效负载计算最低门槛
             let minG1 = Math.ceil(totalMustG1 / effectiveLoad);
             let minG2 = Math.ceil(totalMustG2 / effectiveLoad);
 
             // 确保 minG1 + minG2 <= minTotal，如果不够，按比例填充
             if (minG1 + minG2 < minTotal) {
                 const diff = minTotal - (minG1 + minG2);
-                // 按 3:2 比例分配给高一高二 (用户偏好)
-                const addG1 = Math.ceil(diff * 0.6);
+                // 按 4:6 比例分配给高一高二 (用户反馈高二缺口较大，作为包干区主力需要更多人)
+                const addG1 = Math.floor(diff * 0.4);
                 const addG2 = diff - addG1;
                 minG1 += addG1;
                 minG2 += addG2;
@@ -147,22 +159,18 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
         };
         
         // 1. 最少模式 (Min): Max 3
-        // 效率因子 0.77 (原0.82 -> 人均 2.31 任务)
-        // 63 / 2.31 = 27.2 -> 28人
-        // 用户反馈：13人(总26)覆盖率76/78，少了。
-        // 目标是全覆盖，所以增加到 14-15人(总27-28)。
+        // 效率因子 0.77 (人均约 2.31 任务)
+        // 调整至 15人缺口 (总28人) 以确保覆盖
         const minCalc = calculatePeople(3, 0.77); 
 
         // 2. 均衡模式 (Balanced): Max 3
-        // 效率因子 0.73 (原0.78 -> 人均 2.19 任务)
-        // 63 / 2.19 = 28.7 -> 29人
-        // 保持比最少多1人的梯度
+        // 效率因子 0.73 (人均约 2.19 任务)
+        // 保持梯度，比最少模式略多冗余
         const balancedCalc = calculatePeople(3, 0.73);
         
         // 3. 最多模式 (Max): Max 2
-        // 效率因子 0.96 (原1.0 -> 0.96, 人均 1.92 任务)
-        // 63 / 1.92 = 32.8 -> 33人
-        // 用户反馈：32人时还需招19人(总32) 覆盖率少了一个。要20人(总33)。
+        // 效率因子 0.96 (人均约 1.92 任务)
+        // 调整至 20人缺口 (总33人) 以确保完全覆盖
         const maxCalc = calculatePeople(2, 0.96);
 
         // --- DEPT B 计算 (不变) ---
@@ -188,11 +196,29 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
 
     // 3. 缺口分析
     const analysis = useMemo(() => {
+        // 计算各模式下的高一/高二具体缺口
+        // 需要考虑现有人员 (stats.deptA.g1 和 stats.deptA.g2)
+        // 逻辑：目标人数 - 现有对应年级人数 = 建议招聘该年级人数
+        
+        const calculateGap = (targetG1: number, targetG2: number) => {
+            const gapG1 = Math.max(0, targetG1 - stats.deptA.g1);
+            const gapG2 = Math.max(0, targetG2 - stats.deptA.g2);
+            return {
+                total: gapG1 + gapG2,
+                g1: gapG1,
+                g2: gapG2
+            };
+        };
+
+        const gapMin = calculateGap(needs.deptA.gradeDistribution.min.g1, needs.deptA.gradeDistribution.min.g2);
+        const gapBalanced = calculateGap(needs.deptA.gradeDistribution.balanced.g1, needs.deptA.gradeDistribution.balanced.g2);
+        const gapMax = calculateGap(needs.deptA.gradeDistribution.max.g1, needs.deptA.gradeDistribution.max.g2);
+
         return {
             deptA: {
-                min: Math.max(0, needs.deptA.min - stats.deptA.total),
-                balanced: Math.max(0, needs.deptA.balanced - stats.deptA.total),
-                max: Math.max(0, needs.deptA.max - stats.deptA.total)
+                min: gapMin,
+                balanced: gapBalanced,
+                max: gapMax
             },
             deptB: {
                 min: Math.max(0, needs.deptB.min - stats.deptB.total),
@@ -201,20 +227,14 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
         };
     }, [needs, stats]);
 
-    // 4. 计算覆盖率预估 (根据历史经验)
-    // Max 3 模式下，单人贡献约 2.4 任务 (Efficiency 0.8)
-    // Max 2 模式下，单人贡献约 1.95 任务 (Efficiency 0.97)
-    // 总任务分母修正为 78
+    // 4. 计算覆盖率预估
     const estimateCoverage = (deptATarget: number, maxLoad: number) => {
-        // 根据新的计算逻辑微调预估效率
-        // Max 3: 0.85 -> 99%
-        // Max 2: 0.98 -> 99%
-        const efficiency = maxLoad === 3 ? 0.85 : 0.96; 
+        // ... (保持原逻辑不变)
+        // 根据不同模式的效率因子估算覆盖率
+        const efficiency = maxLoad === 3 ? 0.77 : 0.96; 
         const capacityA = deptATarget * maxLoad * efficiency;
         const coveredA = Math.min(63, capacityA);
-        
         const coveredB = Math.min(15, stats.deptB.total * 3); 
-        
         const totalCovered = coveredA + coveredB;
         return Math.floor((totalCovered / 78) * 100);
     };
@@ -223,6 +243,23 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
         min: estimateCoverage(needs.deptA.min, 3),
         balanced: estimateCoverage(needs.deptA.balanced, 3),
         max: estimateCoverage(needs.deptA.max, 2)
+    };
+
+    // 辅助函数：处理预览点击
+    const handlePreviewClick = (mode: 'min' | 'balanced' | 'max') => {
+        const target = mode === 'min' ? needs.deptA.min : (mode === 'balanced' ? needs.deptA.balanced : needs.deptA.max);
+        const maxLoad = mode === 'max' ? 2 : 3;
+        
+        // 获取用户输入的高二人数，如果没有输入则使用建议值
+        const g2RecruitStr = g2Input[mode];
+        const g2Recruit = g2RecruitStr !== '' ? parseInt(g2RecruitStr) : analysis.deptA[mode].g2;
+
+        onPreview({
+            deptATarget: target,
+            deptBTarget: stats.deptB.total,
+            maxTasksPerPerson: maxLoad,
+            g2Count: g2Recruit // 传递明确的高二招聘人数
+        });
     };
 
     return (
@@ -329,10 +366,24 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                                             style={{width: `${Math.min(100, (stats.deptA.total / needs.deptA.min) * 100)}%`}}
                                         ></div>
                                     </div>
-                                    {analysis.deptA.min > 0 ? (
-                                        <p className="text-xs text-red-600 mt-1 flex items-center gap-1">
-                                            <TrendingUp size={12}/> 缺口: {analysis.deptA.min} 人
-                                        </p>
+                                    {analysis.deptA.min.total > 0 ? (
+                                        <div className="text-xs text-red-600 mt-1 space-y-0.5">
+                                            <p className="flex items-center gap-1 font-bold">
+                                                <TrendingUp size={12}/> 缺口: {analysis.deptA.min.total} 人
+                                            </p>
+                                            <div className="pl-4 flex items-center gap-2">
+                                                <span>需招: 高一 {analysis.deptA.min.g1} 人, 高二 </span>
+                                                <input 
+                                                    type="number" 
+                                                    className="w-12 h-5 text-xs border rounded px-1 text-center bg-white"
+                                                    placeholder={analysis.deptA.min.g2.toString()}
+                                                    value={g2Input.min}
+                                                    onChange={(e) => handleG2InputChange('min', e.target.value)}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
+                                                <span>人</span>
+                                            </div>
+                                        </div>
                                     ) : (
                                         <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
                                             <TrendingDown size={12}/> 人员充足
@@ -340,11 +391,7 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                                     )}
                                     
                                     <button
-                                        onClick={() => onPreview({
-                                            deptATarget: needs.deptA.min,
-                                            deptBTarget: stats.deptB.total, // 保持现有人数
-                                            maxTasksPerPerson: 3
-                                        })}
+                                        onClick={() => handlePreviewClick('min')}
                                         className="mt-2 w-full py-1.5 bg-red-50 hover:bg-red-100 text-red-700 text-xs rounded border border-red-200 transition flex items-center justify-center gap-1"
                                     >
                                         <Users size={12}/> 生成最少配置排班预览 (Max 3)
@@ -360,21 +407,31 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                                     <div className="text-xs text-gray-500 mb-2">
                                         覆盖率约{coverage.balanced}%，建议高一{needs.deptA.gradeDistribution?.balanced.g1}人 + 高二{needs.deptA.gradeDistribution?.balanced.g2}人
                                     </div>
-                                    {analysis.deptA.balanced > 0 ? (
-                                        <p className="text-xs text-purple-600 mt-1 flex items-center gap-1">
-                                            <TrendingUp size={12}/> 建议招聘: {analysis.deptA.balanced} 人
-                                        </p>
+                                    {analysis.deptA.balanced.total > 0 ? (
+                                        <div className="text-xs text-purple-600 mt-1 space-y-0.5">
+                                            <p className="flex items-center gap-1 font-bold">
+                                                <TrendingUp size={12}/> 建议招聘: {analysis.deptA.balanced.total} 人
+                                            </p>
+                                            <div className="pl-4 flex items-center gap-2">
+                                                <span>需招: 高一 {analysis.deptA.balanced.g1} 人, 高二 </span>
+                                                <input 
+                                                    type="number" 
+                                                    className="w-12 h-5 text-xs border rounded px-1 text-center bg-white"
+                                                    placeholder={analysis.deptA.balanced.g2.toString()}
+                                                    value={g2Input.balanced}
+                                                    onChange={(e) => handleG2InputChange('balanced', e.target.value)}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
+                                                <span>人</span>
+                                            </div>
+                                        </div>
                                     ) : (
                                         <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
                                             <TrendingDown size={12}/> 人员充足
                                         </p>
                                     )}
                                     <button
-                                        onClick={() => onPreview({
-                                            deptATarget: needs.deptA.balanced,
-                                            deptBTarget: stats.deptB.total, // 保持现有人数
-                                            maxTasksPerPerson: 3
-                                        })}
+                                        onClick={() => handlePreviewClick('balanced')}
                                         className="mt-2 w-full py-1.5 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs rounded border border-purple-200 transition flex items-center justify-center gap-1 font-medium"
                                     >
                                         <Star size={12}/> 生成均衡排班预览 (Max 3)
@@ -391,20 +448,30 @@ const RecruitmentAnalysisModal: React.FC<Props> = ({isOpen, onClose, students, o
                                         覆盖率约{coverage.max}%，建议高一{needs.deptA.gradeDistribution?.max.g1}人 + 高二{needs.deptA.gradeDistribution?.max.g2}人
                                     </div>
                                     {stats.deptA.total < needs.deptA.max ? (
-                                        <p className="text-xs text-blue-600 mt-1">
-                                            还需招聘 {needs.deptA.max - stats.deptA.total} 人
-                                        </p>
+                                        <div className="text-xs text-blue-600 mt-1 space-y-0.5">
+                                            <p className="font-bold">
+                                                还需招聘 {needs.deptA.max - stats.deptA.total} 人
+                                            </p>
+                                            <div className="pl-0 flex items-center gap-2">
+                                                <span>需招: 高一 {analysis.deptA.max.g1} 人, 高二 </span>
+                                                <input 
+                                                    type="number" 
+                                                    className="w-12 h-5 text-xs border rounded px-1 text-center bg-white"
+                                                    placeholder={analysis.deptA.max.g2.toString()}
+                                                    value={g2Input.max}
+                                                    onChange={(e) => handleG2InputChange('max', e.target.value)}
+                                                    onClick={(e) => e.stopPropagation()}
+                                                />
+                                                <span>人</span>
+                                            </div>
+                                        </div>
                                     ) : (
                                         <p className="text-xs text-orange-600 mt-1">
                                             当前人数已达到或超过目标
                                         </p>
                                     )}
                                      <button
-                                        onClick={() => onPreview({
-                                            deptATarget: needs.deptA.max,
-                                            deptBTarget: stats.deptB.total, // 保持现有人数，不增加
-                                            maxTasksPerPerson: 2
-                                        })}
+                                        onClick={() => handlePreviewClick('max')}
                                         className="mt-2 w-full py-1.5 bg-gray-50 hover:bg-gray-100 text-gray-600 text-xs rounded border border-gray-200 transition flex items-center justify-center gap-1"
                                     >
                                         <Users size={12}/> 生成完全覆盖排班预览 (Max 2)
