@@ -41,21 +41,14 @@ export const canAssign = (student: Student, task: TaskDefinition, options?: Sche
         }
     }
 
-    // 3. 包干区任务仅限高二学生
-    if (task.category === TaskCategory.CLEANING) {
-        if (student.grade !== 2) {
-            return {valid: false, reason: '包干区仅限高二'};
-        }
-    }
-
     /* 上午眼操项目已下线
-    // 4. 上午眼保健操高三不参与检查
+    // 3. 上午眼保健操高三不参与检查
     if (task.timeSlot === TimeSlot.EYE_AM && student.grade === 3) {
         return {valid: false, reason: '高三不参与该项检查'};
     }
     */
 
-    // 5. 晚自习年级冲突检查（避嫌）
+    // 4. 晚自习年级冲突检查（避嫌）
     if (task.forbiddenGrade && student.grade === task.forbiddenGrade) {
         return {valid: false, reason: '需避嫌(本年级)'};
     }
