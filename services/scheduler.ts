@@ -3,7 +3,33 @@ import {ALL_TASKS, SPECIAL_DEPARTMENTS} from '../constants';
 
 export interface SchedulerOptions {
     enableTemporaryMode?: boolean;
+    useNumberedLayout?: boolean;
 }
+
+const NUMBERED_LAYOUT_MAP: Record<string, number> = {
+    'clean-out': 1,
+    'clean-in-1': 2,
+    'clean-in-2': 3,
+    'clean-late-1': 4,
+    'clean-late-2': 5,
+    'ex-out-1': 1,
+    'ex-out-2': 2,
+    'ex-out-3': 3,
+    'ex-in-1': 3,
+    'ex-in-2': 4,
+    'ex-in-3': 9,
+    'ex-in-4': 9,
+    'ex-in-5': 5,
+    'eye-pm-g1-a': 4,
+    'eye-pm-g1-b': 5,
+    'eye-pm-g2-a': 6,
+    'eye-pm-g2-b': 7,
+    'eye-pm-g3-a': 8,
+    'eye-pm-g3-b': 9,
+    'even-g1': 6,
+    'even-g2': 7,
+    'even-g3': 8,
+};
 
 // 检查学生是否符合任务的基础硬性要求（部门、年级、避嫌）
 export const canAssign = (student: Student, task: TaskDefinition, options?: SchedulerOptions): { valid: boolean; reason?: string } => {
@@ -295,6 +321,122 @@ const distributeStudentsToGroups = (
     return groups;
 };
 
+const isMinister = (student: Student): boolean => {
+    return (student.role || '').includes('部长');
+};
+
+const getGroupLoadMap = (assignments: Record<string, string>, groupId: number): Record<string, number> => {
+    const loadMap: Record<string, number> = {};
+    Object.entries(assignments).forEach(([key, sid]) => {
+        const [_, gStr] = key.split('::');
+        if (parseInt(gStr) !== groupId) return;
+        loadMap[sid] = (loadMap[sid] || 0) + 1;
+    });
+    return loadMap;
+};
+
+const getNumberedStudents = (students: Student[]): Student[] => {
+    return [...students]
+        .filter(student => student.department !== Department.CHAIRMAN)
+        .filter(student => !isMinister(student))
+        .sort((a, b) => {
+            if (a.grade !== b.grade) return a.grade - b.grade;
+            if (a.classNum !== b.classNum) return a.classNum - b.classNum;
+            const nameDiff = a.name.localeCompare(b.name, 'zh-CN');
+            if (nameDiff !== 0) return nameDiff;
+            return a.id.localeCompare(b.id);
+        })
+        .slice(0, 9);
+};
+
+const calculateLoadVariance = (assignments: Record<string, string>): number => {
+    const studentTotalLoad: Record<string, number> = {};
+    Object.values(assignments).forEach(sid => {
+        studentTotalLoad[sid] = (studentTotalLoad[sid] || 0) + 1;
+    });
+
+    let variance = 0;
+    Object.values(studentTotalLoad).forEach(load => {
+        variance += load * load;
+    });
+    return variance;
+};
+
+const runNumberedLayoutAttempt = (
+    students: Student[],
+    currentAssignments: Record<string, string>,
+    numGroups: number,
+    lockedAssignments: Map<string, Set<number>>
+): Record<string, string> => {
+    const newAssignments = {...currentAssignments};
+    const studentsPerGroup = distributeStudentsToGroups(students, numGroups, lockedAssignments);
+
+    for (let g = 0; g < numGroups; g++) {
+        const groupStudents = studentsPerGroup[g].filter(student => student.department !== Department.CHAIRMAN);
+        const ministers = groupStudents.filter(isMinister);
+        const numberedStudents = getNumberedStudents(groupStudents);
+
+        for (const task of ALL_TASKS) {
+            const key = `${task.id}::${g}`;
+            if (newAssignments[key]) continue;
+
+            const personNo = NUMBERED_LAYOUT_MAP[task.id];
+            if (!personNo) continue;
+
+            const candidate = numberedStudents[personNo - 1];
+            if (!candidate) continue;
+
+            newAssignments[key] = candidate.id;
+        }
+
+        const exOut1Key = `ex-out-1::${g}`;
+        if (!currentAssignments[exOut1Key]) {
+            const currentAssigneeId = newAssignments[exOut1Key];
+            const currentAssignee = groupStudents.find(s => s.id === currentAssigneeId);
+            if (!currentAssignee || !isMinister(currentAssignee)) {
+                const loadMap = getGroupLoadMap(newAssignments, g);
+                const preferredMinister = [...ministers].sort((a, b) => {
+                    const loadA = loadMap[a.id] || 0;
+                    const loadB = loadMap[b.id] || 0;
+                    if (loadA !== loadB) return loadA - loadB;
+                    return a.id.localeCompare(b.id);
+                })[0];
+
+                if (preferredMinister) {
+                    newAssignments[exOut1Key] = preferredMinister.id;
+                }
+            }
+        }
+
+        const fillCandidates = groupStudents.filter(student => !isMinister(student));
+        const sortedTasks = [...ALL_TASKS].sort((a, b) => {
+            if (a.id === 'ex-out-1') return -1;
+            if (b.id === 'ex-out-1') return 1;
+            return 0;
+        });
+
+        for (const task of sortedTasks) {
+            const key = `${task.id}::${g}`;
+            if (newAssignments[key]) continue;
+            if (fillCandidates.length === 0) continue;
+
+            const loadMap = getGroupLoadMap(newAssignments, g);
+            const bestCandidate = [...fillCandidates].sort((a, b) => {
+                const loadA = loadMap[a.id] || 0;
+                const loadB = loadMap[b.id] || 0;
+                if (loadA !== loadB) return loadA - loadB;
+                return a.id.localeCompare(b.id);
+            })[0];
+
+            if (bestCandidate) {
+                newAssignments[key] = bestCandidate.id;
+            }
+        }
+    }
+
+    return newAssignments;
+};
+
 // --- 模拟退火支持 ---
 
 // 计算当前分配方案的能量值（越低越好），用于评估方案质量
@@ -505,6 +647,25 @@ export const autoScheduleMultiGroup = (
         if (!lockedAssignments.has(sId)) lockedAssignments.set(sId, new Set());
         lockedAssignments.get(sId)!.add(gId);
     });
+
+    if (options?.useNumberedLayout) {
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            const newAssignments = runNumberedLayoutAttempt(students, currentAssignments, numGroups, lockedAssignments);
+            const filledCount = Object.keys(newAssignments).length;
+            const currentLoadVariance = calculateLoadVariance(newAssignments);
+
+            if (filledCount > maxFilledCount) {
+                maxFilledCount = filledCount;
+                minLoadVariance = currentLoadVariance;
+                bestAssignments = newAssignments;
+            } else if (filledCount === maxFilledCount && currentLoadVariance < minLoadVariance) {
+                minLoadVariance = currentLoadVariance;
+                bestAssignments = newAssignments;
+            }
+        }
+
+        return bestAssignments;
+    }
 
     for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
         const newAssignments = {...currentAssignments};
@@ -766,6 +927,62 @@ export const autoScheduleMultiGroupAsync = async (
         if (!lockedAssignments.has(sId)) lockedAssignments.set(sId, new Set());
         lockedAssignments.get(sId)!.add(gId);
     });
+
+    if (options?.useNumberedLayout) {
+        onProgress(`初始化完成，准备进行 ${MAX_RETRIES} 次编号排版尝试...`, {
+            attempt: 0,
+            maxAttempts: MAX_RETRIES,
+            coverage: 0,
+            totalSlots,
+            variance: 0,
+            bestCoverage: 0,
+            bestVariance: 0
+        });
+
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+
+            const newAssignments = runNumberedLayoutAttempt(students, currentAssignments, numGroups, lockedAssignments);
+            const filledCount = Object.keys(newAssignments).length;
+            const currentLoadVariance = calculateLoadVariance(newAssignments);
+
+            if (filledCount > maxFilledCount) {
+                maxFilledCount = filledCount;
+                minLoadVariance = currentLoadVariance;
+                bestAssignments = newAssignments;
+            } else if (filledCount === maxFilledCount && currentLoadVariance < minLoadVariance) {
+                minLoadVariance = currentLoadVariance;
+                bestAssignments = newAssignments;
+            }
+
+            if (attempt % 10 === 0 || attempt === MAX_RETRIES - 1) {
+                onProgress(
+                    `编号排版中... (${attempt + 1}/${MAX_RETRIES}) 当前覆盖率: ${filledCount}/${totalSlots}`,
+                    {
+                        attempt: attempt + 1,
+                        maxAttempts: MAX_RETRIES,
+                        coverage: filledCount,
+                        totalSlots,
+                        variance: currentLoadVariance,
+                        bestCoverage: maxFilledCount,
+                        bestVariance: minLoadVariance
+                    }
+                );
+            }
+        }
+
+        onProgress(`编号排版完成。最终覆盖率: ${maxFilledCount}/${totalSlots}`, {
+            attempt: MAX_RETRIES,
+            maxAttempts: MAX_RETRIES,
+            coverage: maxFilledCount,
+            totalSlots,
+            variance: minLoadVariance,
+            bestCoverage: maxFilledCount,
+            bestVariance: minLoadVariance
+        });
+
+        return bestAssignments;
+    }
 
     onProgress(`初始化完成，准备进行 ${MAX_RETRIES} 次尝试...`, {
         attempt: 0,

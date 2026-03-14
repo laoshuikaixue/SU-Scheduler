@@ -25,9 +25,10 @@ interface Props {
     groupCount: number;
     conflicts?: ConflictInfo[];
     enableMerge?: boolean;
+    disableTaskRestrictions?: boolean;
 }
 
-const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap, groupCount, conflicts = [], enableMerge = false}) => {
+const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap, groupCount, conflicts = [], enableMerge = false, disableTaskRestrictions = false}) => {
     const [activeId, setActiveId] = useState<string | null>(null);
     const [activeStudent, setActiveStudent] = useState<Student | null>(null);
 
@@ -244,7 +245,7 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
 
                                             const studentId = assignments[key];
                                             const student = students.find(s => s.id === studentId);
-                                            const validation = student ? canAssign(student, task) : {valid: true};
+                                            const validation = disableTaskRestrictions || !student ? {valid: true} : canAssign(student, task);
 
                                             // 查找当前单元格的冲突
                                             const cellConflict = conflicts.find(c =>
@@ -267,6 +268,7 @@ const ScheduleGrid: React.FC<Props> = ({students, assignments, onAssign, onSwap,
                                                     assignments={assignments}
                                                     isFirstLeaderOccurrence={leaderFirstTaskIds[g] === task.id}
                                                     rowSpan={merge?.rowSpan || 1}
+                                                    disableTaskRestrictions={disableTaskRestrictions}
                                                 />
                                             );
                                         })}
@@ -308,7 +310,8 @@ const CellWrapper: React.FC<{
     assignments: Record<string, string>;
     isFirstLeaderOccurrence?: boolean;
     rowSpan?: number;
-}> = ({id, student, validation, onAssign, allStudents, task, groupIndex, conflict, assignments, isFirstLeaderOccurrence, rowSpan = 1}) => {
+    disableTaskRestrictions?: boolean;
+}> = ({id, student, validation, onAssign, allStudents, task, groupIndex, conflict, assignments, isFirstLeaderOccurrence, rowSpan = 1, disableTaskRestrictions = false}) => {
     const {setNodeRef, attributes, listeners, isDragging} = useDraggable({
         id: id,
         disabled: !student // 仅当有学生时可拖拽
@@ -354,6 +357,7 @@ const CellWrapper: React.FC<{
                     task={task}
                     groupIndex={groupIndex}
                     assignments={assignments}
+                    disableTaskRestrictions={disableTaskRestrictions}
                 />
             </div>
         </td>
@@ -369,7 +373,8 @@ const CellInput: React.FC<{
     task: any;
     groupIndex: number;
     assignments: Record<string, string>;
-}> = ({value, allStudents, onSelect, isValid, validationMsg, task, groupIndex, assignments}) => {
+    disableTaskRestrictions?: boolean;
+}> = ({value, allStudents, onSelect, isValid, validationMsg, task, groupIndex, assignments, disableTaskRestrictions = false}) => {
     const [query, setQuery] = useState('');
     const [isEditing, setIsEditing] = useState(false);
     const [suggestions, setSuggestions] = useState<Student[]>([]);
@@ -381,6 +386,7 @@ const CellInput: React.FC<{
             let newSuggestions: Student[] = [];
             if (!query) {
                 newSuggestions = allStudents.filter(s => {
+                    if (disableTaskRestrictions) return true;
                     const check = checkGroupAvailability(s, task, groupIndex, assignments);
                     return check.valid;
                 }).slice(0, 5);
@@ -391,13 +397,14 @@ const CellInput: React.FC<{
                     if (!nameMatch) return false;
 
                     // 同时也检查搜索结果的基本有效性（可选，但用户体验更好）
+                    if (disableTaskRestrictions) return true;
                     return canAssign(s, task).valid;
                 }).slice(0, 5);
             }
             setSuggestions(newSuggestions);
             setSelectedIndex(0);
         }
-    }, [query, isEditing, allStudents, task, groupIndex, assignments]);
+    }, [query, isEditing, allStudents, task, groupIndex, assignments, disableTaskRestrictions]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (!isEditing || suggestions.length === 0) return;

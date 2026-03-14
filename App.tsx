@@ -63,9 +63,14 @@ const App: React.FC = () => {
     const [isCalculating, setIsCalculating] = useState(false);
     const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
     const [isTemporaryMode, setIsTemporaryMode] = useState(false);
+    const [isNumberedLayoutMode, setIsNumberedLayoutMode] = useState(false);
 
-    const conflicts = getScheduleConflicts(students, assignments, groupCount, { enableTemporaryMode: isTemporaryMode });
-    const suggestions = getSuggestions(students, conflicts, assignments, { enableTemporaryMode: isTemporaryMode });
+    const schedulerOptions = {
+        enableTemporaryMode: isTemporaryMode,
+        useNumberedLayout: isNumberedLayoutMode
+    };
+    const conflicts: ConflictInfo[] = isNumberedLayoutMode ? [] : getScheduleConflicts(students, assignments, groupCount, schedulerOptions);
+    const suggestions = isNumberedLayoutMode ? [] : getSuggestions(students, conflicts, assignments, schedulerOptions);
 
     // 计算每个学生的任务数量
     const taskCounts = React.useMemo(() => {
@@ -155,6 +160,12 @@ const App: React.FC = () => {
                 }
                 if (data.groupCount) {
                     setGroupCount(data.groupCount);
+                }
+                if (typeof data.isTemporaryMode === 'boolean') {
+                    setIsTemporaryMode(data.isTemporaryMode);
+                }
+                if (typeof data.isNumberedLayoutMode === 'boolean') {
+                    setIsNumberedLayoutMode(data.isNumberedLayoutMode);
                 }
 
                 showToast('数据导入成功！');
@@ -293,7 +304,7 @@ const App: React.FC = () => {
                     setLogs(prev => [...prev, log]);
                     if (newStats) setStats(newStats);
                 },
-                { enableTemporaryMode: isTemporaryMode }
+                schedulerOptions
             );
             pushHistory(newSchedule);
             showToast(`${groupCount}组自动编排完成！`);
@@ -320,7 +331,7 @@ const App: React.FC = () => {
                     setLogs(prev => [...prev, log]);
                     if (newStats) setStats(newStats);
                 },
-                { enableTemporaryMode: isTemporaryMode }
+                schedulerOptions
             );
             pushHistory(newSchedule);
             showToast(`${groupCount}组自动补全完成！`);
@@ -982,6 +993,8 @@ const App: React.FC = () => {
             students,
             assignments,
             groupCount,
+            isTemporaryMode,
+            isNumberedLayoutMode,
             date: new Date().toISOString()
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
@@ -1105,6 +1118,18 @@ const App: React.FC = () => {
                     </button>
 
                     <button
+                        onClick={() => setIsNumberedLayoutMode(!isNumberedLayoutMode)}
+                        className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm transition shadow-sm whitespace-nowrap ${
+                            isNumberedLayoutMode
+                            ? 'bg-teal-600 hover:bg-teal-700 text-white'
+                            : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                        }`}
+                        title="编号排版模式：每组按1-9号人员分配固定任务序列"
+                    >
+                        <Users size={16}/> {isNumberedLayoutMode ? '编号排版开启' : '编号排版'}
+                    </button>
+
+                    <button
                         onClick={handleAutoSchedule}
                         className="flex items-center gap-2 px-3 py-2 bg-primary hover:bg-blue-600 text-white rounded-md text-sm transition shadow-sm whitespace-nowrap"
                     >
@@ -1172,6 +1197,7 @@ const App: React.FC = () => {
                     groupCount={groupCount}
                     conflicts={conflicts}
                     enableMerge={isExportingImage}
+                    disableTaskRestrictions={isNumberedLayoutMode}
                 />
                         </div>
                     </div>
