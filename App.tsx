@@ -421,6 +421,39 @@ const App: React.FC = () => {
         XLSX.writeFile(wb, "学生会名单模板.xlsx");
     };
 
+    const mergeIndoorIntervalTasks = (tasks: string[]): string[] => {
+        const floorOrder: Record<string, number> = {'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10};
+        const floorsByOrder: Record<number, string> = {1: '一', 2: '二', 3: '三', 4: '四', 5: '五', 6: '六', 7: '七', 8: '八', 9: '九', 10: '十'};
+        const indoorFloors: number[] = [];
+        const otherTasks: string[] = [];
+
+        tasks.forEach(task => {
+            const match = task.match(/^课间操室内([一二三四五六七八九十])楼$/);
+            if (!match) {
+                otherTasks.push(task);
+                return;
+            }
+            indoorFloors.push(floorOrder[match[1]]);
+        });
+
+        indoorFloors.sort((a, b) => a - b);
+        const mergedIndoorTasks: string[] = [];
+        let i = 0;
+        while (i < indoorFloors.length) {
+            const currentGroup = [indoorFloors[i]];
+            while (i + 1 < indoorFloors.length && indoorFloors[i + 1] === indoorFloors[i] + 1) {
+                i++;
+                currentGroup.push(indoorFloors[i]);
+            }
+
+            const floorText = currentGroup.map(f => `${floorsByOrder[f]}楼`).join('、');
+            mergedIndoorTasks.push(`课间操室内${floorText}`);
+            i++;
+        }
+
+        return [...otherTasks, ...mergedIndoorTasks];
+    };
+
     const getGroupedPersonalTasks = () => {
         const result: {
             groupId: number;
@@ -490,10 +523,9 @@ const App: React.FC = () => {
                     currentClass = className;
                 }
 
-                // 对任务进行排序以确保顺序一致
-                tasks.sort();
-
-                content += `${student.name}： ${tasks.join('；')}\n`;
+                const mergedTasks = mergeIndoorIntervalTasks([...tasks]);
+                mergedTasks.sort();
+                content += `${student.name}： ${mergedTasks.join('；')}\n`;
             });
         });
 
@@ -733,6 +765,7 @@ const App: React.FC = () => {
                     sheetRows.push([className]);
                     currentClass = className;
                 }
+                tasks = mergeIndoorIntervalTasks(tasks);
                 tasks.sort();
                 sheetRows.push([`${student.name}： ${tasks.join('；')}`]);
             });
@@ -919,6 +952,7 @@ const App: React.FC = () => {
                                             const merged = '眼操上午高一'; // 这里简化处理，直接用最常见的情况
                                             tasks.push(merged);
                                         }
+                                        tasks = mergeIndoorIntervalTasks(tasks);
 
                                         const className = formatClassName(student.grade, student.classNum);
                                         if (className !== currentClass) {

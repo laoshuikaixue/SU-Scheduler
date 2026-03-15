@@ -6,6 +6,16 @@ export interface SchedulerOptions {
     useNumberedLayout?: boolean;
 }
 
+const isIndoorIntervalTask = (task: TaskDefinition): boolean => {
+    return task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
+};
+
+const calculateEffectiveLoadByTasks = (tasks: TaskDefinition[]): number => {
+    const indoorCount = tasks.filter(isIndoorIntervalTask).length;
+    const otherCount = tasks.length - indoorCount;
+    return otherCount + Math.ceil(indoorCount / 2);
+};
+
 const NUMBERED_LAYOUT_MAP: Record<string, number> = {
     'clean-out': 1,
     'clean-in-1': 2,
@@ -118,9 +128,12 @@ export const checkGroupAvailability = (
         return {valid: false, reason: `已在第${otherGroupAssignment + 1}组`};
     }
 
+    const assignedTasks = assignedTaskIds
+        .map(tid => ALL_TASKS.find(t => t.id === tid))
+        .filter((t): t is TaskDefinition => Boolean(t));
+
     // 3. 检查负载 (Max 2)
-    // 计算有效负载：高一上午眼操同时负责两个班级时，视为一个任务负载
-    let effectiveLoad = assignedTaskIds.length;
+    let effectiveLoad = calculateEffectiveLoadByTasks(assignedTasks);
     /* 上午眼操项目已下线
     const g1EyeTasks = assignedTaskIds.map(tid => ALL_TASKS.find(t => t.id === tid)!)
         .filter(t => t && t.category === TaskCategory.EYE_EXERCISE && t.subCategory === '上午' && t.name.includes('高一'));
@@ -131,7 +144,7 @@ export const checkGroupAvailability = (
     */
 
     // 预测添加新任务后的有效负载
-    let newEffectiveLoad = effectiveLoad;
+    let newEffectiveLoad = calculateEffectiveLoadByTasks([...assignedTasks, task]);
     /* 上午眼操项目已下线
     const isTaskG1Eye = task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一');
     
@@ -144,8 +157,6 @@ export const checkGroupAvailability = (
         newEffectiveLoad += 1;
     }
     */
-    newEffectiveLoad += 1;
-
     if (newEffectiveLoad > 2) {
         // 例外情况检查
         // 0. 临时模式：主席团/纪检/学习部 忽略负载限制以填满包干区
@@ -158,14 +169,11 @@ export const checkGroupAvailability = (
             // 但负载限制本身忽略
         } else {
             // 1. 室内课间操：允许负载更高（<= 5），前提是任务全为室内课间操
-            const isIndoorTask = task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内';
+            const isIndoorTask = isIndoorIntervalTask(task);
             let isIndoorValid = false;
             if (isIndoorTask) {
-                const allIndoor = assignedTaskIds.every(tid => {
-                    const t = ALL_TASKS.find(x => x.id === tid);
-                    return t && t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内';
-                });
-                if (allIndoor && assignedTaskIds.length < 5) {
+                const allIndoor = assignedTasks.every(isIndoorIntervalTask);
+                if (allIndoor && newEffectiveLoad <= 3) {
                     isIndoorValid = true;
                 }
             }
@@ -190,7 +198,6 @@ export const checkGroupAvailability = (
     }
 
     // 4. 检查互斥 (包干区 vs 晚自习)
-    const assignedTasks = assignedTaskIds.map(tid => ALL_TASKS.find(t => t.id === tid)!);
     const hasCleaning = assignedTasks.some(t => t.category === TaskCategory.CLEANING);
     const hasEvening = assignedTasks.some(t => t.category === TaskCategory.EVENING_STUDY);
 
@@ -325,6 +332,157 @@ const isMinister = (student: Student): boolean => {
     return (student.role || '').includes('部长');
 };
 
+const compareGradeForInternship = (a: Student, b: Student): number => {
+    if (a.grade === 1 && b.grade !== 1) return -1;
+    if (b.grade === 1 && a.grade !== 1) return 1;
+    if (a.grade === 2 && b.grade === 3) return -1;
+    if (a.grade === 3 && b.grade === 2) return 1;
+    return 0;
+};
+
+const shouldEnforceAvoidanceInNumbered = (task: TaskDefinition): boolean => {
+    return task.category === TaskCategory.EVENING_STUDY || task.category === TaskCategory.EYE_EXERCISE;
+};
+
+const passesAvoidanceInNumbered = (student: Student, task: TaskDefinition): boolean => {
+    if (task.forbiddenGrade && student.grade === task.forbiddenGrade) {
+        return false;
+    }
+    if (task.forbiddenClassGroup) {
+        if (
+            student.grade === task.forbiddenClassGroup.grade &&
+            student.classNum >= task.forbiddenClassGroup.minClass &&
+            student.classNum <= task.forbiddenClassGroup.maxClass
+        ) {
+            return false;
+        }
+    }
+    return true;
+};
+
+const hasIntervalMixedConflictInNumbered = (
+    assignments: Record<string, string>,
+    groupId: number,
+    studentId: string,
+    task: TaskDefinition
+): boolean => {
+    if (task.category !== TaskCategory.INTERVAL_EXERCISE) return false;
+
+    const targetSubCategory = task.subCategory;
+    for (const [key, sid] of Object.entries(assignments)) {
+        if (sid !== studentId) continue;
+        const [taskId, gStr] = key.split('::');
+        if (parseInt(gStr) !== groupId) continue;
+        const assignedTask = ALL_TASKS.find(t => t.id === taskId);
+        if (!assignedTask) continue;
+        if (assignedTask.category !== TaskCategory.INTERVAL_EXERCISE) continue;
+        if (assignedTask.subCategory !== targetSubCategory) return true;
+    }
+    return false;
+};
+
+const canTakeTaskInNumberedBalance = (
+    student: Student,
+    task: TaskDefinition,
+    groupId: number,
+    assignments: Record<string, string>
+): boolean => {
+    if (isMinister(student) && task.id !== 'ex-out-1') return false;
+    if (shouldEnforceAvoidanceInNumbered(task) && !passesAvoidanceInNumbered(student, task)) return false;
+    if (hasIntervalMixedConflictInNumbered(assignments, groupId, student.id, task)) return false;
+    return true;
+};
+
+const rebalanceNumberedGroupLoads = (
+    assignments: Record<string, string>,
+    groupId: number,
+    groupStudents: Student[]
+) => {
+    const groupStudentMap = new Map(groupStudents.map(s => [s.id, s]));
+    const getGroupLoads = () => {
+        const loadMap: Record<string, number> = {};
+        groupStudents.forEach(s => {
+            loadMap[s.id] = 0;
+        });
+        Object.entries(assignments).forEach(([key, sid]) => {
+            const [_, gStr] = key.split('::');
+            if (parseInt(gStr) !== groupId) return;
+            if (loadMap[sid] === undefined) return;
+            loadMap[sid]++;
+        });
+        return loadMap;
+    };
+
+    let moved = true;
+    while (moved) {
+        moved = false;
+        const loadMap = getGroupLoads();
+        const donors = Object.entries(loadMap)
+            .filter(([_, load]) => load >= 3)
+            .sort((a, b) => b[1] - a[1])
+            .map(([sid]) => sid);
+
+        for (const donorId of donors) {
+            const donor = groupStudentMap.get(donorId);
+            if (!donor) continue;
+
+            const donorTaskKeys = Object.keys(assignments).filter(key => {
+                const [taskId, gStr] = key.split('::');
+                if (assignments[key] !== donorId) return false;
+                if (parseInt(gStr) !== groupId) return false;
+                if (taskId === 'ex-out-1') return false;
+                const task = ALL_TASKS.find(t => t.id === taskId);
+                if (!task) return false;
+                if (isIndoorIntervalTask(task)) return false;
+                return true;
+            });
+
+            if (donorTaskKeys.length === 0) continue;
+
+            donorTaskKeys.sort((a, b) => {
+                const taskA = ALL_TASKS.find(t => t.id === a.split('::')[0]);
+                const taskB = ALL_TASKS.find(t => t.id === b.split('::')[0]);
+                const score = (task: TaskDefinition | undefined) => {
+                    if (!task) return 0;
+                    if (task.category === TaskCategory.CLEANING) return 1;
+                    if (task.category === TaskCategory.INTERVAL_EXERCISE) return 2;
+                    if (task.category === TaskCategory.EYE_EXERCISE) return 3;
+                    if (task.category === TaskCategory.EVENING_STUDY) return 4;
+                    return 5;
+                };
+                return score(taskA) - score(taskB);
+            });
+
+            for (const taskKey of donorTaskKeys) {
+                const [taskId] = taskKey.split('::');
+                const task = ALL_TASKS.find(t => t.id === taskId);
+                if (!task) continue;
+
+                const receivers = [...groupStudents]
+                    .filter(s => s.id !== donorId)
+                    .filter(s => (loadMap[s.id] || 0) <= 1)
+                    .filter(s => canTakeTaskInNumberedBalance(s, task, groupId, assignments))
+                    .sort((a, b) => {
+                        const loadA = loadMap[a.id] || 0;
+                        const loadB = loadMap[b.id] || 0;
+                        if (loadA !== loadB) return loadA - loadB;
+                        const gradePriority = compareGradeForInternship(a, b);
+                        if (gradePriority !== 0) return gradePriority;
+                        return a.id.localeCompare(b.id);
+                    });
+
+                if (receivers.length === 0) continue;
+
+                assignments[taskKey] = receivers[0].id;
+                moved = true;
+                break;
+            }
+
+            if (moved) break;
+        }
+    }
+};
+
 const getGroupLoadMap = (assignments: Record<string, string>, groupId: number): Record<string, number> => {
     const loadMap: Record<string, number> = {};
     Object.entries(assignments).forEach(([key, sid]) => {
@@ -383,8 +541,30 @@ const runNumberedLayoutAttempt = (
             const personNo = NUMBERED_LAYOUT_MAP[task.id];
             if (!personNo) continue;
 
-            const candidate = numberedStudents[personNo - 1];
+            const enforceAvoidance = shouldEnforceAvoidanceInNumbered(task);
+            let candidate = numberedStudents[personNo - 1];
             if (!candidate) continue;
+            if (enforceAvoidance && !passesAvoidanceInNumbered(candidate, task)) {
+                const alternatives = numberedStudents.filter(s => {
+                    return passesAvoidanceInNumbered(s, task);
+                });
+                if (alternatives.length > 0) {
+                    candidate = alternatives[0];
+                } else {
+                    continue;
+                }
+            }
+            if (hasIntervalMixedConflictInNumbered(newAssignments, g, candidate.id, task)) {
+                const alternatives = numberedStudents.filter(s => {
+                    if (enforceAvoidance && !passesAvoidanceInNumbered(s, task)) return false;
+                    return !hasIntervalMixedConflictInNumbered(newAssignments, g, s.id, task);
+                });
+                if (alternatives.length > 0) {
+                    candidate = alternatives[0];
+                } else {
+                    continue;
+                }
+            }
 
             newAssignments[key] = candidate.id;
         }
@@ -420,8 +600,20 @@ const runNumberedLayoutAttempt = (
             if (newAssignments[key]) continue;
             if (fillCandidates.length === 0) continue;
 
+            const enforceAvoidance = shouldEnforceAvoidanceInNumbered(task);
             const loadMap = getGroupLoadMap(newAssignments, g);
-            const bestCandidate = [...fillCandidates].sort((a, b) => {
+            const availableCandidates = fillCandidates.filter(student => {
+                if (!enforceAvoidance) return true;
+                return passesAvoidanceInNumbered(student, task);
+            }).filter(student => {
+                return !hasIntervalMixedConflictInNumbered(newAssignments, g, student.id, task);
+            });
+            if (availableCandidates.length === 0) continue;
+
+            const bestCandidate = [...availableCandidates].sort((a, b) => {
+                const gradePriority = compareGradeForInternship(a, b);
+                if (gradePriority !== 0) return gradePriority;
+
                 const loadA = loadMap[a.id] || 0;
                 const loadB = loadMap[b.id] || 0;
                 if (loadA !== loadB) return loadA - loadB;
@@ -432,6 +624,8 @@ const runNumberedLayoutAttempt = (
                 newAssignments[key] = bestCandidate.id;
             }
         }
+
+        rebalanceNumberedGroupLoads(newAssignments, g, groupStudents);
     }
 
     return newAssignments;
@@ -480,12 +674,13 @@ const calculateEnergy = (
         Object.entries(groupStudents).forEach(([sid, tasks]) => {
             // 负载检查
             let maxLoad = 2;
+            const effectiveLoad = calculateEffectiveLoadByTasks(tasks);
             const eyeCount = tasks.filter(t => t.category === TaskCategory.EYE_EXERCISE).length;
             // 豁免逻辑: 如果任务数=3且含2眼操，允许
-            if (tasks.length === 3 && eyeCount >= 2) maxLoad = 3;
+            if (effectiveLoad === 3 && eyeCount >= 2) maxLoad = 3;
 
-            if (tasks.length > maxLoad) {
-                energy += (tasks.length - maxLoad) * 2000; // 过载惩罚
+            if (effectiveLoad > maxLoad) {
+                energy += (effectiveLoad - maxLoad) * 2000; // 过载惩罚
             }
 
             // 互斥检查
@@ -704,6 +899,7 @@ export const autoScheduleMultiGroup = (
         // 逐组编排
         for (let g = 0; g < numGroups; g++) {
             const groupWorkload: Record<string, number> = {};
+            const studentIndoorCounts: Record<string, number> = {};
             const studentCategories: Record<string, Set<TaskCategory>> = {};
             const studentTimeSlots: Record<string, Set<TimeSlot>> = {};
 
@@ -712,6 +908,7 @@ export const autoScheduleMultiGroup = (
             // 初始化追踪器
             groupStudents.forEach(s => {
                 groupWorkload[s.id] = 0;
+                studentIndoorCounts[s.id] = 0;
                 studentCategories[s.id] = new Set();
                 studentTimeSlots[s.id] = new Set();
             });
@@ -723,6 +920,9 @@ export const autoScheduleMultiGroup = (
                 if (sid) {
                     if (groupWorkload[sid] !== undefined) {
                         groupWorkload[sid] = (groupWorkload[sid] || 0) + 1;
+                        if (isIndoorIntervalTask(task)) {
+                            studentIndoorCounts[sid] = (studentIndoorCounts[sid] || 0) + 1;
+                        }
                         studentCategories[sid].add(task.category);
                         studentTimeSlots[sid].add(task.timeSlot);
                     }
@@ -848,6 +1048,9 @@ export const autoScheduleMultiGroup = (
                         if (hasCleanA && !hasCleanB) return -1;
                         if (!hasCleanA && hasCleanB) return 1;
                     }
+
+                    const gradePriority = compareGradeForInternship(a, b);
+                    if (gradePriority !== 0) return gradePriority;
 
                     return Math.random() - 0.5;
                 });
@@ -1107,26 +1310,11 @@ export const autoScheduleMultiGroupAsync = async (
                         }
                     }
 
-                    // 计算有效负载: 高一上午眼操2个算1个
-                    let effectiveLoad = groupWorkload[student.id];
-                    /* 上午眼操项目已下线
-                    if (studentG1EyeCounts[student.id] >= 2) {
-                        effectiveLoad -= 1;
-                    }
-                    */
-
-                    // 预测新任务带来的负载变化
-                    let loadIncrement = 1;
-                    /* 上午眼操项目已下线
-                    if (task.category === TaskCategory.EYE_EXERCISE && 
-                        task.subCategory === '上午' && 
-                        task.name.includes('高一') && 
-                        studentG1EyeCounts[student.id] >= 1) {
-                        loadIncrement = 0;
-                    }
-                    */
-                    
-                    const futureEffectiveLoad = effectiveLoad + loadIncrement;
+                    const rawLoad = groupWorkload[student.id] || 0;
+                    const indoorCount = studentIndoorCounts[student.id] || 0;
+                    const futureRawLoad = rawLoad + 1;
+                    const futureIndoorCount = indoorCount + (isIndoorIntervalTask(task) ? 1 : 0);
+                    const futureEffectiveLoad = futureRawLoad - Math.floor(futureIndoorCount / 2);
                     const futureNonEyeCount = studentNonEyeCounts[student.id] + (task.category !== TaskCategory.EYE_EXERCISE ? 1 : 0);
 
                     // 允许有效负载达到 3，但必须满足：非眼操任务最多 1 个
@@ -1280,7 +1468,7 @@ export const autoScheduleMultiGroupAsync = async (
 
                     // 计算有效负载
                     const getEffectiveLoad = (sid: string, rawLoad: number) => {
-                        let eff = rawLoad;
+                        let eff = rawLoad - Math.floor((studentIndoorCounts[sid] || 0) / 2);
                         /* 上午眼操项目已下线
                         if (studentG1EyeCounts[sid] >= 2) {
                             eff -= 1;
@@ -1312,6 +1500,9 @@ export const autoScheduleMultiGroupAsync = async (
                     
                     // 1. 负载均衡
                     if (loadA !== loadB) return loadA - loadB;
+
+                    const gradePriority = compareGradeForInternship(a, b);
+                    if (gradePriority !== 0) return gradePriority;
 
                     // 2. 年级偏好
                     // 优先让高三检查课间操室外和晚自习
@@ -1384,6 +1575,7 @@ export const autoScheduleMultiGroupAsync = async (
 
                 if (groupWorkload[bestCandidate.id] === undefined) {
                     groupWorkload[bestCandidate.id] = 0;
+                    studentIndoorCounts[bestCandidate.id] = 0;
                     studentCategories[bestCandidate.id] = new Set();
                     studentTimeSlots[bestCandidate.id] = new Set();
                     /* 上午眼操项目已下线
@@ -1393,6 +1585,9 @@ export const autoScheduleMultiGroupAsync = async (
                 }
 
                 groupWorkload[bestCandidate.id]++;
+                if (isIndoorIntervalTask(task)) {
+                    studentIndoorCounts[bestCandidate.id] = (studentIndoorCounts[bestCandidate.id] || 0) + 1;
+                }
                 studentCategories[bestCandidate.id].add(task.category);
                 studentTimeSlots[bestCandidate.id].add(task.timeSlot);
 
@@ -1553,7 +1748,7 @@ export const getScheduleConflicts = (
             const nonEyeCount = tasks.length - eyeExerciseCount;
             
             // 计算有效负载
-            let effectiveCount = tasks.length;
+            let effectiveCount = calculateEffectiveLoadByTasks(tasks.map(t => t.task));
             /* 上午眼操项目已下线
             const g1EyeTasks = tasks.filter(t => t.task.category === TaskCategory.EYE_EXERCISE && t.task.subCategory === '上午' && t.task.name.includes('高一'));
             if (g1EyeTasks.length >= 2) effectiveCount -= 1;
