@@ -381,6 +381,46 @@ const hasIntervalMixedConflictInNumbered = (
     return false;
 };
 
+const hasTimeConflictInNumbered = (
+    assignments: Record<string, string>,
+    groupId: number,
+    studentId: string,
+    task: TaskDefinition
+): boolean => {
+    if (isIndoorIntervalTask(task)) return false;
+
+    for (const [key, sid] of Object.entries(assignments)) {
+        if (sid !== studentId) continue;
+        const [taskId, gStr] = key.split('::');
+        if (parseInt(gStr) !== groupId) continue;
+        const assignedTask = ALL_TASKS.find(t => t.id === taskId);
+        if (!assignedTask) continue;
+        if (isIndoorIntervalTask(assignedTask)) continue;
+        if (assignedTask.timeSlot === task.timeSlot) return true;
+    }
+    return false;
+};
+
+const hasCleaningEveningConflictInNumbered = (
+    assignments: Record<string, string>,
+    groupId: number,
+    studentId: string,
+    task: TaskDefinition
+): boolean => {
+    if (task.category !== TaskCategory.CLEANING && task.category !== TaskCategory.EVENING_STUDY) return false;
+
+    for (const [key, sid] of Object.entries(assignments)) {
+        if (sid !== studentId) continue;
+        const [taskId, gStr] = key.split('::');
+        if (parseInt(gStr) !== groupId) continue;
+        const assignedTask = ALL_TASKS.find(t => t.id === taskId);
+        if (!assignedTask) continue;
+        if (task.category === TaskCategory.CLEANING && assignedTask.category === TaskCategory.EVENING_STUDY) return true;
+        if (task.category === TaskCategory.EVENING_STUDY && assignedTask.category === TaskCategory.CLEANING) return true;
+    }
+    return false;
+};
+
 const canTakeTaskInNumberedBalance = (
     student: Student,
     task: TaskDefinition,
@@ -390,13 +430,16 @@ const canTakeTaskInNumberedBalance = (
     if (isMinister(student) && task.id !== 'ex-out-1') return false;
     if (shouldEnforceAvoidanceInNumbered(task) && !passesAvoidanceInNumbered(student, task)) return false;
     if (hasIntervalMixedConflictInNumbered(assignments, groupId, student.id, task)) return false;
+    if (hasTimeConflictInNumbered(assignments, groupId, student.id, task)) return false;
+    if (hasCleaningEveningConflictInNumbered(assignments, groupId, student.id, task)) return false;
     return true;
 };
 
 const rebalanceNumberedGroupLoads = (
     assignments: Record<string, string>,
     groupId: number,
-    groupStudents: Student[]
+    groupStudents: Student[],
+    lockedAssignments: Map<string, Set<number>>
 ) => {
     const groupStudentMap = new Map(groupStudents.map(s => [s.id, s]));
     const getGroupLoads = () => {
@@ -431,6 +474,16 @@ const rebalanceNumberedGroupLoads = (
                 if (assignments[key] !== donorId) return false;
                 if (parseInt(gStr) !== groupId) return false;
                 if (taskId === 'ex-out-1') return false;
+                
+                // 检查该任务是否是锁定的
+                const lockedGroupsForStudent = lockedAssignments.get(donorId);
+                if (lockedGroupsForStudent && lockedGroupsForStudent.has(groupId)) {
+                    // 如果该学生在这个组有锁定分配，我们需要进一步确认这个具体的 taskKey 是否最初就分配给了他
+                    // 由于 currentAssignments 没有传进来，我们简化处理：如果他在这个组有锁定，就不移动他的任何任务
+                    // 这是一个保守策略，确保手动分配不被破坏
+                    return false;
+                }
+
                 const task = ALL_TASKS.find(t => t.id === taskId);
                 if (!task) return false;
                 if (isIndoorIntervalTask(task)) return false;
@@ -565,6 +618,45 @@ const runNumberedLayoutAttempt = (
                     continue;
                 }
             }
+            if (hasTimeConflictInNumbered(newAssignments, g, candidate.id, task)) {
+                const alternatives = numberedStudents.filter(s => {
+                    if (enforceAvoidance && !passesAvoidanceInNumbered(s, task)) return false;
+                    if (hasIntervalMixedConflictInNumbered(newAssignments, g, s.id, task)) return false;
+                    return !hasTimeConflictInNumbered(newAssignments, g, s.id, task);
+                });
+                if (alternatives.length > 0) {
+                    candidate = alternatives[0];
+                } else {
+                    continue;
+                }
+            }
+            if (hasCleaningEveningConflictInNumbered(newAssignments, g, candidate.id, task)) {
+                const alternatives = numberedStudents.filter(s => {
+                    if (enforceAvoidance && !passesAvoidanceInNumbered(s, task)) return false;
+                    if (hasIntervalMixedConflictInNumbered(newAssignments, g, s.id, task)) return false;
+                    if (hasTimeConflictInNumbered(newAssignments, g, s.id, task)) return false;
+                    return !hasCleaningEveningConflictInNumbered(newAssignments, g, s.id, task);
+                });
+                if (alternatives.length > 0) {
+                    candidate = alternatives[0];
+                } else {
+                    const fallbackCandidates = numberedStudents.filter(s => {
+                        if (enforceAvoidance && !passesAvoidanceInNumbered(s, task)) return false;
+                        if (hasIntervalMixedConflictInNumbered(newAssignments, g, s.id, task)) return false;
+                        return !hasTimeConflictInNumbered(newAssignments, g, s.id, task);
+                    });
+                    if (fallbackCandidates.length === 0) {
+                        continue;
+                    }
+                    candidate = [...fallbackCandidates].sort((a, b) => {
+                        if (a.grade === 1 && b.grade !== 1) return -1;
+                        if (b.grade === 1 && a.grade !== 1) return 1;
+                        const gradePriority = compareGradeForInternship(a, b);
+                        if (gradePriority !== 0) return gradePriority;
+                        return a.id.localeCompare(b.id);
+                    })[0];
+                }
+            }
 
             newAssignments[key] = candidate.id;
         }
@@ -575,12 +667,18 @@ const runNumberedLayoutAttempt = (
             const currentAssignee = groupStudents.find(s => s.id === currentAssigneeId);
             if (!currentAssignee || !isMinister(currentAssignee)) {
                 const loadMap = getGroupLoadMap(newAssignments, g);
-                const preferredMinister = [...ministers].sort((a, b) => {
+                const exOut1Task = ALL_TASKS.find(t => t.id === 'ex-out-1');
+                const preferredMinister = exOut1Task ? [...ministers].sort((a, b) => {
                     const loadA = loadMap[a.id] || 0;
                     const loadB = loadMap[b.id] || 0;
                     if (loadA !== loadB) return loadA - loadB;
                     return a.id.localeCompare(b.id);
-                })[0];
+                }).find(student => canTakeTaskInNumberedBalance(
+                    student,
+                    exOut1Task,
+                    g,
+                    newAssignments
+                )) : undefined;
 
                 if (preferredMinister) {
                     newAssignments[exOut1Key] = preferredMinister.id;
@@ -606,11 +704,11 @@ const runNumberedLayoutAttempt = (
                 if (!enforceAvoidance) return true;
                 return passesAvoidanceInNumbered(student, task);
             }).filter(student => {
-                return !hasIntervalMixedConflictInNumbered(newAssignments, g, student.id, task);
+                if (hasIntervalMixedConflictInNumbered(newAssignments, g, student.id, task)) return false;
+                if (hasTimeConflictInNumbered(newAssignments, g, student.id, task)) return false;
+                return !hasCleaningEveningConflictInNumbered(newAssignments, g, student.id, task);
             });
-            if (availableCandidates.length === 0) continue;
-
-            const bestCandidate = [...availableCandidates].sort((a, b) => {
+            let bestCandidate = [...availableCandidates].sort((a, b) => {
                 const gradePriority = compareGradeForInternship(a, b);
                 if (gradePriority !== 0) return gradePriority;
 
@@ -620,12 +718,30 @@ const runNumberedLayoutAttempt = (
                 return a.id.localeCompare(b.id);
             })[0];
 
+            if (!bestCandidate) {
+                const fallbackCandidates = fillCandidates.filter(student => {
+                    if (enforceAvoidance && !passesAvoidanceInNumbered(student, task)) return false;
+                    if (hasIntervalMixedConflictInNumbered(newAssignments, g, student.id, task)) return false;
+                    return !hasTimeConflictInNumbered(newAssignments, g, student.id, task);
+                });
+                bestCandidate = [...fallbackCandidates].sort((a, b) => {
+                    if (a.grade === 1 && b.grade !== 1) return -1;
+                    if (b.grade === 1 && a.grade !== 1) return 1;
+                    const gradePriority = compareGradeForInternship(a, b);
+                    if (gradePriority !== 0) return gradePriority;
+                    const loadA = loadMap[a.id] || 0;
+                    const loadB = loadMap[b.id] || 0;
+                    if (loadA !== loadB) return loadA - loadB;
+                    return a.id.localeCompare(b.id);
+                })[0];
+            }
+
             if (bestCandidate) {
                 newAssignments[key] = bestCandidate.id;
             }
         }
 
-        rebalanceNumberedGroupLoads(newAssignments, g, groupStudents);
+        rebalanceNumberedGroupLoads(newAssignments, g, groupStudents, lockedAssignments);
     }
 
     return newAssignments;
@@ -1228,6 +1344,7 @@ export const autoScheduleMultiGroupAsync = async (
 
         for (let g = 0; g < numGroups; g++) {
             const groupWorkload: Record<string, number> = {};
+            const studentIndoorCounts: Record<string, number> = {};
             const studentCategories: Record<string, Set<TaskCategory>> = {};
             const studentTimeSlots: Record<string, Set<TimeSlot>> = {};
             /* 上午眼操项目已下线
@@ -1238,6 +1355,7 @@ export const autoScheduleMultiGroupAsync = async (
 
             groupStudents.forEach(s => {
                 groupWorkload[s.id] = 0;
+                studentIndoorCounts[s.id] = 0;
                 studentCategories[s.id] = new Set();
                 studentTimeSlots[s.id] = new Set();
                 /* 上午眼操项目已下线
@@ -1252,6 +1370,9 @@ export const autoScheduleMultiGroupAsync = async (
                 if (sid) {
                     if (groupWorkload[sid] !== undefined) {
                         groupWorkload[sid] = (groupWorkload[sid] || 0) + 1;
+                        if (isIndoorIntervalTask(task)) {
+                            studentIndoorCounts[sid] = (studentIndoorCounts[sid] || 0) + 1;
+                        }
                         studentCategories[sid].add(task.category);
                         studentTimeSlots[sid].add(task.timeSlot);
                         

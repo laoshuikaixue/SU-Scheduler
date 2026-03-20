@@ -295,10 +295,10 @@ const App: React.FC = () => {
         setStats(undefined);
 
         try {
-            // 编排 N 组 - 传入空对象以强制重新计算
+            const baseAssignments = schedulerOptions.useNumberedLayout ? assignments : {};
             const newSchedule = await autoScheduleMultiGroupAsync(
                 students,
-                {},
+                baseAssignments,
                 groupCount,
                 (log, newStats) => {
                     setLogs(prev => [...prev, log]);
