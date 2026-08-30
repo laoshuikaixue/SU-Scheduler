@@ -11,7 +11,7 @@ import {
     getScheduleConflicts,
     getSuggestions
 } from './services/scheduler';
-import {formatClassName} from './utils';
+import {formatClassName, gradeLabel} from './utils';
 import CalculationLog from './components/CalculationLog';
 import {
     Download,
@@ -36,6 +36,8 @@ import {pinyin} from 'pinyin-pro';
 import Modal from './components/Modal';
 import {SuggestionsPanel} from './components/SuggestionsPanel';
 import SwapModal from './components/SwapModal';
+import StudentEditModal from './components/StudentEditModal';
+import BatchGradeModal from './components/BatchGradeModal';
 import { SwapProposal } from './services/swapService';
 
 const App: React.FC = () => {
@@ -98,6 +100,8 @@ const App: React.FC = () => {
         isOpen: false,
         clearStudents: false
     });
+    const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
+    const [isBatchGradeOpen, setIsBatchGradeOpen] = useState(false);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const jsonInputRef = useRef<HTMLInputElement>(null);
@@ -1041,6 +1045,63 @@ const App: React.FC = () => {
         ));
     };
 
+    const editingStudent = students.find(s => s.id === editingStudentId) || null;
+
+    const handleSaveStudent = (updated: Student) => {
+        setStudents(prev => prev.map(s => s.id === updated.id ? {
+            ...updated,
+            pinyinInitials: pinyin(updated.name, {pattern: 'first', toneType: 'none', type: 'array'}).join('')
+        } : s));
+        setEditingStudentId(null);
+        showToast(`已更新 ${updated.name} 的信息`);
+    };
+
+    const handleBatchUpdateGrade = (fromGrade: number, toGrade: number) => {
+        const snapshot = students;
+        const count = students.filter(s => s.grade === fromGrade).length;
+        setStudents(prev => prev.map(s => s.grade === fromGrade ? {...s, grade: toGrade} : s));
+        setIsBatchGradeOpen(false);
+        showToast(`已将 ${count} 名${gradeLabel(fromGrade)}成员改为${gradeLabel(toGrade)}`, 'success', {
+            label: '撤销',
+            onClick: () => setStudents(snapshot)
+        });
+    };
+
+    const exportRosterExcel = () => {
+        if (students.length === 0) {
+            showToast('人员名单为空', 'error');
+            return;
+        }
+
+        const sorted = [...students].sort((a, b) => {
+            if (a.grade !== b.grade) return a.grade - b.grade;
+            if (a.classNum !== b.classNum) return a.classNum - b.classNum;
+            return a.name.localeCompare(b.name, 'zh-CN');
+        });
+
+        const rows = sorted.map(s => ({
+            姓名: s.name,
+            年级班级: `${gradeLabel(s.grade)}（${s.classNum}）班`,
+            职务: s.role || (s.isLeader ? '组长' : '')
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(rows, {header: ['姓名', '年级班级', '职务']});
+        ws['!cols'] = [{wch: 14}, {wch: 16}, {wch: 12}];
+        ['A1', 'B1', 'C1'].forEach(addr => {
+            if (ws[addr]) {
+                ws[addr].s = {
+                    font: {bold: true},
+                    fill: {fgColor: {rgb: "EFEFEF"}},
+                    alignment: {horizontal: "center", vertical: "center"}
+                };
+            }
+        });
+
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "名单");
+        XLSX.writeFile(wb, "学生会名单.xlsx");
+    };
+
     return (
         <div className="flex flex-col h-screen bg-gray-50">
             <header className="bg-white border-b px-6 py-4 flex flex-wrap gap-y-4 justify-between items-center shadow-sm z-10 shrink-0">
@@ -1218,7 +1279,14 @@ const App: React.FC = () => {
             </header>
 
             <div className="flex flex-1 overflow-hidden">
-                <StudentList students={students} taskCounts={taskCounts} onToggleLeader={handleToggleLeader} />
+                <StudentList
+                    students={students}
+                    taskCounts={taskCounts}
+                    onToggleLeader={handleToggleLeader}
+                    onEditStudent={setEditingStudentId}
+                    onBatchUpdateGrade={() => setIsBatchGradeOpen(true)}
+                    onExportRoster={exportRosterExcel}
+                />
 
                 <main className="flex-1 overflow-auto bg-gray-100 p-6 flex justify-center">
                     <div className="w-full max-w-[1400px] flex flex-col">
@@ -1277,6 +1345,22 @@ const App: React.FC = () => {
                     });
                 }}
             />
+
+            {editingStudent && (
+                <StudentEditModal
+                    student={editingStudent}
+                    onClose={() => setEditingStudentId(null)}
+                    onSave={handleSaveStudent}
+                />
+            )}
+
+            {isBatchGradeOpen && (
+                <BatchGradeModal
+                    students={students}
+                    onClose={() => setIsBatchGradeOpen(false)}
+                    onApply={handleBatchUpdateGrade}
+                />
+            )}
 
             <Modal
                 isOpen={exportDialog.isOpen}

@@ -1,15 +1,25 @@
 import React, {useState} from 'react';
 import {Department, Student} from '../types';
-import {Search, User, Crown} from 'lucide-react';
+import {Search, User, Crown, Pencil, GraduationCap, FileSpreadsheet} from 'lucide-react';
 import {formatClassName} from '../utils';
 
 interface Props {
     students: Student[];
     taskCounts: Record<string, number>;
     onToggleLeader?: (studentId: string) => void;
+    onEditStudent?: (studentId: string) => void;
+    onBatchUpdateGrade?: () => void;
+    onExportRoster?: () => void;
 }
 
-const StudentList: React.FC<Props> = ({students, taskCounts, onToggleLeader}) => {
+const StudentList: React.FC<Props> = ({
+    students,
+    taskCounts,
+    onToggleLeader,
+    onEditStudent,
+    onBatchUpdateGrade,
+    onExportRoster,
+}) => {
     const [filter, setFilter] = useState('');
 
     const onDragStart = (e: React.DragEvent, studentId: string) => {
@@ -36,6 +46,22 @@ const StudentList: React.FC<Props> = ({students, taskCounts, onToggleLeader}) =>
                         value={filter}
                         onChange={e => setFilter(e.target.value)}
                     />
+                </div>
+                <div className="flex gap-2 mt-2">
+                    <button
+                        onClick={onBatchUpdateGrade}
+                        className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-md text-xs text-gray-700 transition whitespace-nowrap"
+                        title="批量更新年级，例如把高二成员整体改为高三"
+                    >
+                        <GraduationCap size={14}/> 批量年级
+                    </button>
+                    <button
+                        onClick={onExportRoster}
+                        className="flex-1 flex items-center justify-center gap-1 px-2 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-md text-xs text-gray-700 transition whitespace-nowrap"
+                        title="导出名单 Excel：姓名 / 年级班级 / 职务"
+                    >
+                        <FileSpreadsheet size={14}/> 导出名单
+                    </button>
                 </div>
             </div>
             <div className="flex-1 overflow-y-auto p-2 space-y-2">
@@ -65,6 +91,18 @@ const StudentList: React.FC<Props> = ({students, taskCounts, onToggleLeader}) =>
                                 >
                                     <Crown size={14} fill={student.isLeader ? "currentColor" : "none"} />
                                 </button>
+                                <button
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        onEditStudent?.(student.id);
+                                    }}
+                                    className="p-0.5 rounded-full text-gray-300 hover:text-blue-500 hover:bg-gray-100 transition-colors"
+                                    title="编辑成员信息"
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                >
+                                    <Pencil size={13}/>
+                                </button>
                             </div>
                             <div className="flex items-center gap-1">
                                 {(taskCounts[student.id] || 0) > 0 && (
@@ -78,7 +116,11 @@ const StudentList: React.FC<Props> = ({students, taskCounts, onToggleLeader}) =>
                             </div>
                         </div>
                         <div className="text-xs text-gray-500 mt-1 flex items-center">
-                            <User size={12} className="mr-1"/> {student.department}
+                            <User size={12} className="mr-1"/>
+                            <span className="truncate">{student.department}</span>
+                            {student.role && (
+                                <span className="ml-1 text-gray-400 truncate">· {student.role}</span>
+                            )}
                         </div>
                     </div>
                 ))}
