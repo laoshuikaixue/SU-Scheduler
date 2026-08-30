@@ -11,7 +11,7 @@ import {
     getScheduleConflicts,
     getSuggestions
 } from './services/scheduler';
-import {formatClassName, gradeLabel} from './utils';
+import {formatClassName, formatClassLabel, gradeLabel} from './utils';
 import CalculationLog from './components/CalculationLog';
 import {
     Download,
@@ -458,6 +458,33 @@ const App: React.FC = () => {
         return [...otherTasks, ...mergedIndoorTasks];
     };
 
+    // 同一时段既查 1-3 班又查 4-6 班时，合并显示为整个年级
+    const mergeEyeClassGroups = (tasks: string[]): string[] => {
+        const bases: string[] = [];
+        const classGroups: Record<string, string[]> = {};
+        const otherTasks: string[] = [];
+
+        tasks.forEach(task => {
+            const match = task.match(/^(.+)（([14]-[36]班)）$/);
+            if (!match) {
+                otherTasks.push(task);
+                return;
+            }
+            const base = match[1];
+            if (!classGroups[base]) {
+                classGroups[base] = [];
+                bases.push(base);
+            }
+            classGroups[base].push(match[2]);
+        });
+
+        const mergedTasks = bases.map(base =>
+            classGroups[base].length > 1 ? base : `${base}（${classGroups[base][0]}）`
+        );
+
+        return [...otherTasks, ...mergedTasks];
+    };
+
     const getGroupedPersonalTasks = () => {
         const result: {
             groupId: number;
@@ -746,32 +773,29 @@ const App: React.FC = () => {
 
         // 3. 个人任务清单表 (可选)
         if (includePersonalList) {
-            const {studentTasks, sortedStudents} = getPersonalTasksData();
             const sheetRows: any[][] = [['个人任务清单']];
-            let currentClass = '';
 
-            sortedStudents.forEach(student => {
-                let tasks = studentTasks[student.id] || [];
-                if (tasks.length === 0) return;
+            getGroupedPersonalTasks().forEach(({groupId, studentTasks, sortedStudents}) => {
+                sheetRows.push(['']);
+                sheetRows.push([`第 ${groupId + 1} 组`]);
+                let currentClass = '';
 
-                // NEW: 合并显示 "高一 (1-3班)" 和 "高一 (4-6班)" -> "高一"
-                const hasG1A = tasks.includes('高一 (1-3班)');
-                const hasG1B = tasks.includes('高一 (4-6班)');
-                
-                if (hasG1A && hasG1B) {
-                    tasks = tasks.filter(t => t !== '高一 (1-3班)' && t !== '高一 (4-6班)');
-                    tasks.push('高一');
-                }
+                sortedStudents.forEach(student => {
+                    const tasks = studentTasks[student.id];
+                    if (!tasks || tasks.length === 0) return;
 
-                const className = formatClassName(student.grade, student.classNum);
-                if (className !== currentClass) {
-                    sheetRows.push(['']); // 空行
-                    sheetRows.push([className]);
-                    currentClass = className;
-                }
-                tasks = mergeIndoorIntervalTasks(tasks);
-                tasks.sort();
-                sheetRows.push([`${student.name}： ${tasks.join('；')}`]);
+                    const className = formatClassName(student.grade, student.classNum);
+                    if (className !== currentClass) {
+                        sheetRows.push(['']); // 空行
+                        sheetRows.push([className]);
+                        currentClass = className;
+                    }
+
+                    let displayTasks = mergeEyeClassGroups([...tasks]);
+                    displayTasks = mergeIndoorIntervalTasks(displayTasks);
+                    displayTasks.sort();
+                    sheetRows.push([`${student.name}： ${displayTasks.join('；')}`]);
+                });
             });
 
             const ws3 = XLSX.utils.aoa_to_sheet(sheetRows);
@@ -1081,21 +1105,27 @@ const App: React.FC = () => {
 
         const rows = sorted.map(s => ({
             姓名: s.name,
-            年级班级: `${gradeLabel(s.grade)}（${s.classNum}）班`,
+            年级班级: formatClassLabel(s.grade, s.classNum),
+            部门: s.department,
             职务: s.role || (s.isLeader ? '组长' : '')
         }));
 
-        const ws = XLSX.utils.json_to_sheet(rows, {header: ['姓名', '年级班级', '职务']});
-        ws['!cols'] = [{wch: 14}, {wch: 16}, {wch: 12}];
-        ['A1', 'B1', 'C1'].forEach(addr => {
-            if (ws[addr]) {
-                ws[addr].s = {
-                    font: {bold: true},
-                    fill: {fgColor: {rgb: "EFEFEF"}},
-                    alignment: {horizontal: "center", vertical: "center"}
-                };
+        const ws = XLSX.utils.json_to_sheet(rows, {header: ['姓名', '年级班级', '部门', '职务']});
+        ws['!cols'] = [{wch: 14}, {wch: 14}, {wch: 12}, {wch: 12}];
+
+        const rosterRange = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
+        for (let R = rosterRange.s.r; R <= rosterRange.e.r; R++) {
+            for (let C = rosterRange.s.c; C <= rosterRange.e.c; C++) {
+                const cell = ws[XLSX.utils.encode_cell({r: R, c: C})];
+                if (!cell) continue;
+
+                cell.s = {alignment: {horizontal: "center", vertical: "center"}};
+                if (R === 0) {
+                    cell.s.font = {bold: true};
+                    cell.s.fill = {fgColor: {rgb: "EFEFEF"}};
+                }
             }
-        });
+        }
 
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "名单");

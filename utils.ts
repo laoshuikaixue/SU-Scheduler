@@ -10,6 +10,11 @@ export const gradeLabel = (grade: number): string => {
     return `高${GRADE_CN[grade] || grade}`;
 };
 
+// 不带“高”字的班级写法，如 二（3）班
+export const formatClassLabel = (grade: number, classNum: number): string => {
+    return `${GRADE_CN[grade] || grade}（${classNum}）班`;
+};
+
 // 把用户输入的年级（高二 / 2 / 高2）解析为数字年级，无法识别时返回 null
 export const parseGradeInput = (raw: string): number | null => {
     const text = raw.trim().replace(/[年级班]/g, '').replace(/^高/, '');
