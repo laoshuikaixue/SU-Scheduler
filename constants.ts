@@ -72,10 +72,18 @@ const GRADE_CN = ['', '一', '二', '三'];
 export const ALL_TASKS: TaskDefinition[] = [
     // --- 1. 包干区 ---
     {
-        id: 'clean-out',
+        id: 'clean-out-1',
         category: TaskCategory.CLEANING,
         subCategory: '室外',
-        name: '公共区域',
+        name: '公共区域1',
+        timeSlot: TimeSlot.MORNING_CLEAN,
+        allowedDepartments: REGULAR_DEPARTMENTS,
+    },
+    {
+        id: 'clean-out-2',
+        category: TaskCategory.CLEANING,
+        subCategory: '室外',
+        name: '公共区域2',
         timeSlot: TimeSlot.MORNING_CLEAN,
         allowedDepartments: REGULAR_DEPARTMENTS,
     },

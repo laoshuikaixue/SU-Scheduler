@@ -17,9 +17,10 @@ const calculateEffectiveLoadByTasks = (tasks: TaskDefinition[]): number => {
 };
 
 const NUMBERED_LAYOUT_MAP: Record<string, number> = {
-    'clean-out': 1,
-    'clean-in-1': 2,
-    'clean-in-2': 3,
+    'clean-out-1': 1,
+    'clean-out-2': 2,
+    'clean-in-1': 3,
+    'clean-in-2': 4,
     'clean-late-1': 4,
     'clean-late-2': 5,
     'ex-out-1': 1,

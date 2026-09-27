@@ -26,3 +26,15 @@ export const parseGradeInput = (raw: string): number | null => {
     const index = GRADE_CN.indexOf(text);
     return index > 0 ? index : null;
 };
+
+// 旧版数据升级：室外检查由单个「公共区域」(clean-out) 拆分为「公共区域1/2」(clean-out-1/2)，
+// 原有的单条分配迁移到公共区域1，公共区域2 留空待排
+export const migrateAssignments = (assignments: Record<string, string>): Record<string, string> => {
+    const migrated: Record<string, string> = {};
+    Object.entries(assignments).forEach(([key, sid]) => {
+        const [taskId, ...rest] = key.split('::');
+        const newTaskId = taskId === 'clean-out' ? 'clean-out-1' : taskId;
+        migrated[[newTaskId, ...rest].join('::')] = sid;
+    });
+    return migrated;
+};

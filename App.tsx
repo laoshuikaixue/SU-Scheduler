@@ -11,7 +11,7 @@ import {
     getScheduleConflicts,
     getSuggestions
 } from './services/scheduler';
-import {formatClassName, formatClassLabel, gradeLabel} from './utils';
+import {formatClassName, formatClassLabel, gradeLabel, migrateAssignments} from './utils';
 import CalculationLog from './components/CalculationLog';
 import {
     Download,
@@ -160,7 +160,8 @@ const App: React.FC = () => {
                 if (data.assignments) {
                     // 导入分配是重置历史还是添加到历史？
                     // 我们将导入视为一个新的操作
-                    pushHistory(data.assignments);
+                    // 先做旧版数据升级（公共区域拆分为 1/2 两项）
+                    pushHistory(migrateAssignments(data.assignments));
                 }
                 if (data.groupCount) {
                     setGroupCount(data.groupCount);
