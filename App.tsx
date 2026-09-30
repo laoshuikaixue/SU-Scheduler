@@ -102,6 +102,8 @@ const App: React.FC = () => {
     });
     const [editingStudentId, setEditingStudentId] = useState<string | null>(null);
     const [isBatchGradeOpen, setIsBatchGradeOpen] = useState(false);
+    // 人员导入模式选择：当已有人员名单时，弹出对话框让用户选择替换或增量导入
+    const [pendingStudentImport, setPendingStudentImport] = useState<Student[] | null>(null);
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const jsonInputRef = useRef<HTMLInputElement>(null);
@@ -354,8 +356,38 @@ const App: React.FC = () => {
         showToast('已应用建议修改');
     };
 
+    // 将解析后的人员名单写入状态：替换或增量合并
+    const commitStudentImport = (newStudents: Student[], mode: 'replace' | 'incremental') => {
+        if (mode === 'replace' || students.length === 0) {
+            setStudents(newStudents);
+            pushHistory({});
+            showToast(`成功导入 ${newStudents.length} 人`);
+            return;
+        }
+
+        // 增量合并：按 姓名+部门+班级 去重，重复者跳过
+        const keyOf = (s: Student) => `${s.name}::${s.department}::${s.grade}-${s.classNum}`;
+        const existingKeys = new Set(students.map(keyOf));
+        const matched = newStudents.filter(s => existingKeys.has(keyOf(s)));
+        const toAdd = newStudents.filter(s => !existingKeys.has(keyOf(s)));
+
+        // 生成分配给新增人员的唯一 ID
+        let nextId = Date.now();
+        const addedWithId = toAdd.map(s => ({...s, id: `imported-${nextId++}`}));
+
+        setStudents(prev => [...prev, ...addedWithId]);
+        showToast(
+            toAdd.length > 0
+                ? `增量导入完成：新增 ${addedWithId.length} 人${matched.length > 0 ? `，跳过重复 ${matched.length} 人` : ''}`
+                : `没有新增人员，${matched.length} 人已存在`,
+            toAdd.length > 0 ? 'success' : 'error'
+        );
+    };
+
     const handleExcelImport = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
+        // 重置 input，保证选择同一文件时也能触发 onChange
+        if (fileInputRef.current) fileInputRef.current.value = '';
         if (!file) return;
 
         const reader = new FileReader();
@@ -408,9 +440,13 @@ const App: React.FC = () => {
                 };
             });
 
-            setStudents(newStudents);
-            pushHistory({});
-            showToast(`成功导入 ${newStudents.length} 人`);
+            if (students.length === 0) {
+                // 当前无人员，无需选择，直接导入
+                commitStudentImport(newStudents, 'replace');
+            } else {
+                // 已有人员名单，让用户选择导入方式
+                setPendingStudentImport(newStudents);
+            }
         };
         reader.readAsBinaryString(file);
     };
@@ -1547,6 +1583,52 @@ const App: React.FC = () => {
                            className="text-gray-700 cursor-pointer select-none text-sm font-medium">
                         同时清空人员名单
                     </label>
+                </div>
+            </Modal>
+
+            {/* 人员导入模式选择弹窗 */}
+            <Modal
+                isOpen={pendingStudentImport !== null}
+                onClose={() => setPendingStudentImport(null)}
+                title="选择导入方式"
+                width="w-md"
+                footer={
+                    <button
+                        onClick={() => setPendingStudentImport(null)}
+                        className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded text-sm transition"
+                    >
+                        取消
+                    </button>
+                }
+            >
+                <div className="text-gray-600 mb-4">
+                    当前已有 {students.length} 名人员，本次解析到 {pendingStudentImport?.length ?? 0} 人，请选择导入方式：
+                </div>
+                <div className="flex flex-col gap-3">
+                    <button
+                        onClick={() => {
+                            if (pendingStudentImport) {
+                                commitStudentImport(pendingStudentImport, 'replace');
+                            }
+                            setPendingStudentImport(null);
+                        }}
+                        className="flex flex-col items-start gap-1 p-4 text-left bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg transition"
+                    >
+                        <span className="font-bold text-gray-800">替换全部人员</span>
+                        <span className="text-sm text-gray-500">用新名单覆盖现有人员，并清空当前排期安排</span>
+                    </button>
+                    <button
+                        onClick={() => {
+                            if (pendingStudentImport) {
+                                commitStudentImport(pendingStudentImport, 'incremental');
+                            }
+                            setPendingStudentImport(null);
+                        }}
+                        className="flex flex-col items-start gap-1 p-4 text-left bg-primary/5 hover:bg-primary/10 border border-primary/20 rounded-lg transition"
+                    >
+                        <span className="font-bold text-gray-800">增量导入</span>
+                        <span className="text-sm text-gray-500">在现有人员基础上追加新人员，姓名+部门+班级重复的自动跳过，不影响已有排期</span>
+                    </button>
                 </div>
             </Modal>
         </div>
