@@ -1117,6 +1117,29 @@ const App: React.FC = () => {
         showToast(`已更新 ${updated.name} 的信息`);
     };
 
+    // 删除成员，并同步清理其已分配的任务单元格
+    const handleDeleteStudent = (studentId: string) => {
+        const target = students.find(s => s.id === studentId);
+        if (!target) return;
+
+        const removedCount = Object.values(assignments).filter(id => id === studentId).length;
+        if (removedCount > 0) {
+            const next = {...assignments};
+            Object.keys(next).forEach(key => {
+                if (next[key] === studentId) delete next[key];
+            });
+            pushHistory(next);
+        }
+
+        setStudents(prev => prev.filter(s => s.id !== studentId));
+        setEditingStudentId(null);
+        showToast(
+            removedCount > 0
+                ? `已删除 ${target.name}，同时清除其 ${removedCount} 个任务安排`
+                : `已删除 ${target.name}`
+        );
+    };
+
     const handleBatchUpdateGrade = (fromGrade: number, toGrade: number) => {
         const snapshot = students;
         const count = students.filter(s => s.grade === fromGrade).length;
@@ -1418,6 +1441,7 @@ const App: React.FC = () => {
                     student={editingStudent}
                     onClose={() => setEditingStudentId(null)}
                     onSave={handleSaveStudent}
+                    onDelete={handleDeleteStudent}
                 />
             )}
 
