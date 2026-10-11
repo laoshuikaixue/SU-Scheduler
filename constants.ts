@@ -156,11 +156,12 @@ export const ALL_TASKS: TaskDefinition[] = [
     })),
 
     // --- 3. 眼保健操 ---
-    // 上午: 高一, 高二. 下午: 高一, 高二, 高三. 分为 1-3, 4-6 班组.
-    /* 上午眼操项目已下线
+    // 上午: 高一, 高二 (高三不参与检查). 下午: 高一, 高二, 高三. 分为 1-3, 4-6 班组.
+    // 上午使用 eye-morning-* 编号：与早期下线前使用过的 eye-am-* 区分，
+    // 导入旧版数据时旧的 eye-am-* 分配会被丢弃，这些单元格保持留空。
     ...[1, 2].flatMap(grade => [
         {
-            id: `eye-am-g${grade}-a`,
+            id: `eye-morning-g${grade}-a`,
             category: TaskCategory.EYE_EXERCISE,
             subCategory: '上午',
             name: `高${GRADE_CN[grade]} (1-3班)`,
@@ -169,7 +170,7 @@ export const ALL_TASKS: TaskDefinition[] = [
             forbiddenClassGroup: {grade, minClass: 1, maxClass: 3}
         },
         {
-            id: `eye-am-g${grade}-b`,
+            id: `eye-morning-g${grade}-b`,
             category: TaskCategory.EYE_EXERCISE,
             subCategory: '上午',
             name: `高${GRADE_CN[grade]} (4-6班)`,
@@ -178,7 +179,6 @@ export const ALL_TASKS: TaskDefinition[] = [
             forbiddenClassGroup: {grade, minClass: 4, maxClass: 6}
         }
     ]),
-    */
     ...[1, 2, 3].flatMap(grade => [
         {
             id: `eye-pm-g${grade}-a`,

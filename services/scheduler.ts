@@ -78,12 +78,10 @@ export const canAssign = (student: Student, task: TaskDefinition, options?: Sche
         }
     }
 
-    /* 上午眼操项目已下线
     // 3. 上午眼保健操高三不参与检查
     if (task.timeSlot === TimeSlot.EYE_AM && student.grade === 3) {
         return {valid: false, reason: '高三不参与该项检查'};
     }
-    */
 
     // 4. 晚自习年级冲突检查（避嫌）
     if (task.forbiddenGrade && student.grade === task.forbiddenGrade) {
@@ -135,18 +133,15 @@ export const checkGroupAvailability = (
 
     // 3. 检查负载 (Max 2)
     let effectiveLoad = calculateEffectiveLoadByTasks(assignedTasks);
-    /* 上午眼操项目已下线
     const g1EyeTasks = assignedTaskIds.map(tid => ALL_TASKS.find(t => t.id === tid)!)
         .filter(t => t && t.category === TaskCategory.EYE_EXERCISE && t.subCategory === '上午' && t.name.includes('高一'));
     
     if (g1EyeTasks.length >= 2) {
         effectiveLoad -= 1;
     }
-    */
 
     // 预测添加新任务后的有效负载
     let newEffectiveLoad = calculateEffectiveLoadByTasks([...assignedTasks, task]);
-    /* 上午眼操项目已下线
     const isTaskG1Eye = task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一');
     
     if (isTaskG1Eye) {
@@ -157,7 +152,6 @@ export const checkGroupAvailability = (
     } else {
         newEffectiveLoad += 1;
     }
-    */
     if (newEffectiveLoad > 2) {
         // 例外情况检查
         // 0. 临时模式：主席团/纪检/学习部 忽略负载限制以填满包干区
@@ -179,7 +173,6 @@ export const checkGroupAvailability = (
                 }
             }
 
-            /* 上午眼操项目已下线
             // 2. 眼保健操合并 (高一上午)：允许一人检查多个班级
             let isEyeValid = false;
             if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
@@ -189,10 +182,6 @@ export const checkGroupAvailability = (
             }
     
             if (!isIndoorValid && !isEyeValid) {
-                return {valid: false, reason: '负载已满'};
-            }
-            */
-            if (!isIndoorValid) {
                 return {valid: false, reason: '负载已满'};
             }
         }
@@ -217,12 +206,10 @@ export const checkGroupAvailability = (
             const isAssignedIndoor = assignedTask.category === TaskCategory.INTERVAL_EXERCISE && assignedTask.subCategory === '室内';
             if (isAssignedIndoor) continue;
 
-            /* 上午眼操项目已下线
             // 上午眼操同时检查高一两个班不视为时间冲突 (视为合并)
             const isTaskG1Eye = task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一');
             const isAssignedG1Eye = assignedTask.category === TaskCategory.EYE_EXERCISE && assignedTask.subCategory === '上午' && assignedTask.name.includes('高一');
             if (isTaskG1Eye && isAssignedG1Eye) continue;
-            */
 
             if (assignedTask.timeSlot === task.timeSlot) {
                 return {valid: false, reason: `时间冲突 (${task.timeSlot})`};
@@ -817,14 +804,12 @@ const calculateEnergy = (
                     if (t.category === TaskCategory.INTERVAL_EXERCISE && t.subCategory === '室内') return;
                     
                     let slot = t.timeSlot;
-                    /* 上午眼操项目已下线
                     // 高一上午眼操合并豁免
                     if (t.category === TaskCategory.EYE_EXERCISE && t.subCategory === '上午' && t.name.includes('高一')) {
                         slot = <TimeSlot>'EYE_AM_G1_MERGED';
                         // 如果已存在该合并槽位，不再重复记录（视为合并）
                         if (timeSlots.has(slot)) return;
                     }
-                    */
 
                     if (timeSlots.has(slot)) {
                         energy += 1500; // 时间冲突惩罚
@@ -1348,9 +1333,7 @@ export const autoScheduleMultiGroupAsync = async (
             const studentIndoorCounts: Record<string, number> = {};
             const studentCategories: Record<string, Set<TaskCategory>> = {};
             const studentTimeSlots: Record<string, Set<TimeSlot>> = {};
-            /* 上午眼操项目已下线
             const studentG1EyeCounts: Record<string, number> = {}; // 追踪高一上午眼操数量
-            */
             const studentNonEyeCounts: Record<string, number> = {}; // 追踪非眼操数量
             const groupStudents = studentsPerGroup[g];
 
@@ -1359,9 +1342,7 @@ export const autoScheduleMultiGroupAsync = async (
                 studentIndoorCounts[s.id] = 0;
                 studentCategories[s.id] = new Set();
                 studentTimeSlots[s.id] = new Set();
-                /* 上午眼操项目已下线
                 studentG1EyeCounts[s.id] = 0;
-                */
                 studentNonEyeCounts[s.id] = 0;
             });
 
@@ -1377,16 +1358,11 @@ export const autoScheduleMultiGroupAsync = async (
                         studentCategories[sid].add(task.category);
                         studentTimeSlots[sid].add(task.timeSlot);
                         
-                        /* 上午眼操项目已下线
                         if (task.category === TaskCategory.EYE_EXERCISE) {
                             if (task.subCategory === '上午' && task.name.includes('高一')) {
                                 studentG1EyeCounts[sid] = (studentG1EyeCounts[sid] || 0) + 1;
                             }
                         } else {
-                            studentNonEyeCounts[sid] = (studentNonEyeCounts[sid] || 0) + 1;
-                        }
-                        */
-                        if (task.category !== TaskCategory.EYE_EXERCISE) {
                             studentNonEyeCounts[sid] = (studentNonEyeCounts[sid] || 0) + 1;
                         }
                     }
@@ -1471,7 +1447,6 @@ export const autoScheduleMultiGroupAsync = async (
                     });
                 }
 
-                /* 上午眼操项目已下线
                 // 强力重试 - 允许合并高一上午眼操
                 if (candidates.length === 0 && task.category === TaskCategory.EYE_EXERCISE && 
                     task.subCategory === '上午' && task.name.includes('高一')) {
@@ -1491,7 +1466,6 @@ export const autoScheduleMultiGroupAsync = async (
                         return groupWorkload[a.id] - groupWorkload[b.id];
                     });
                 }
-                */
 
                 // 室内课间操特例：允许一人多层
                 if (candidates.length === 0 && task.category === TaskCategory.INTERVAL_EXERCISE && task.subCategory === '室内') {
@@ -1507,7 +1481,6 @@ export const autoScheduleMultiGroupAsync = async (
                     });
                 }
 
-                /* 上午眼操项目已下线
                 // 高一上午眼保健操 - 默认尝试合并 (捆绑 1-3 和 4-6)
                 if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
                      const otherHalf = task.name.includes('1-3') ? '4-6' : '1-3';
@@ -1526,7 +1499,6 @@ export const autoScheduleMultiGroupAsync = async (
                          }
                      }
                 }
-                */
 
                 // 尝试跨组借调 (临时模式 + 包干区)
                 if (candidates.length === 0 && 
@@ -1591,18 +1563,15 @@ export const autoScheduleMultiGroupAsync = async (
                     // 计算有效负载
                     const getEffectiveLoad = (sid: string, rawLoad: number) => {
                         let eff = rawLoad - Math.floor((studentIndoorCounts[sid] || 0) / 2);
-                        /* 上午眼操项目已下线
                         if (studentG1EyeCounts[sid] >= 2) {
                             eff -= 1;
                         }
-                        */
                         return eff;
                     };
 
                     const loadA = getEffectiveLoad(a.id, groupWorkload[a.id]);
                     const loadB = getEffectiveLoad(b.id, groupWorkload[b.id]);
 
-                    /* 上午眼操项目已下线
                     // 高一上午眼保健操 - 强力合并偏好
                     if (task.category === TaskCategory.EYE_EXERCISE && task.subCategory === '上午' && task.name.includes('高一')) {
                          const hasOtherHalf = (sid: string) => {
@@ -1618,7 +1587,6 @@ export const autoScheduleMultiGroupAsync = async (
                          if (hasA && !hasB) return -1;
                          if (!hasA && hasB) return 1;
                     }
-                    */
                     
                     // 1. 负载均衡
                     if (loadA !== loadB) return loadA - loadB;
@@ -1700,9 +1668,7 @@ export const autoScheduleMultiGroupAsync = async (
                     studentIndoorCounts[bestCandidate.id] = 0;
                     studentCategories[bestCandidate.id] = new Set();
                     studentTimeSlots[bestCandidate.id] = new Set();
-                    /* 上午眼操项目已下线
                     studentG1EyeCounts[bestCandidate.id] = 0;
-                    */
                     studentNonEyeCounts[bestCandidate.id] = 0;
                 }
 
@@ -1713,16 +1679,11 @@ export const autoScheduleMultiGroupAsync = async (
                 studentCategories[bestCandidate.id].add(task.category);
                 studentTimeSlots[bestCandidate.id].add(task.timeSlot);
 
-                /* 上午眼操项目已下线
                 if (task.category === TaskCategory.EYE_EXERCISE) {
                     if (task.subCategory === '上午' && task.name.includes('高一')) {
                         studentG1EyeCounts[bestCandidate.id]++;
                     }
                 } else {
-                    studentNonEyeCounts[bestCandidate.id]++;
-                }
-                */
-                if (task.category !== TaskCategory.EYE_EXERCISE) {
                     studentNonEyeCounts[bestCandidate.id]++;
                 }
             }
@@ -1871,10 +1832,8 @@ export const getScheduleConflicts = (
             
             // 计算有效负载
             let effectiveCount = calculateEffectiveLoadByTasks(tasks.map(t => t.task));
-            /* 上午眼操项目已下线
             const g1EyeTasks = tasks.filter(t => t.task.category === TaskCategory.EYE_EXERCISE && t.task.subCategory === '上午' && t.task.name.includes('高一'));
             if (g1EyeTasks.length >= 2) effectiveCount -= 1;
-            */
             
             let isLoadExempt = false;
             if (options?.enableTemporaryMode && 
@@ -1912,7 +1871,6 @@ export const getScheduleConflicts = (
 
             timeSlotCounts.forEach((taskIds, slot) => {
                 if (taskIds.length > 1) {
-                    /* 上午眼操项目已下线
                     // 高一上午眼操合并豁免
                     if (slot === TimeSlot.EYE_AM) {
                         const allTasksAreG1Eye = taskIds.every(tid => {
@@ -1921,7 +1879,6 @@ export const getScheduleConflicts = (
                         });
                         if (allTasksAreG1Eye) return;
                     }
-                    */
 
                     taskIds.forEach(tid => {
                         conflicts.push({

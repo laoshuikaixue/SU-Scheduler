@@ -27,12 +27,24 @@ export const parseGradeInput = (raw: string): number | null => {
     return index > 0 ? index : null;
 };
 
-// 旧版数据升级：室外检查由单个「公共区域」(clean-out) 拆分为「公共区域1/2」(clean-out-1/2)，
-// 原有的单条分配迁移到公共区域1，公共区域2 留空待排
+// 旧版数据升级：
+// 1. 室外检查由单个「公共区域」(clean-out) 拆分为「公共区域1/2」(clean-out-1/2)，
+//    原有的单条分配迁移到公共区域1，公共区域2 留空待排；
+// 2. 上午眼保健操在旧版中曾使用 eye-am-* 编号，现改用 eye-morning-* 重新上线，
+//    旧版的上午眼操分配不再使用，直接丢弃，对应单元格保持留空。
+const LEGACY_EYE_AM_TASKS = new Set([
+    'eye-am-g1-a',
+    'eye-am-g1-b',
+    'eye-am-g2-a',
+    'eye-am-g2-b',
+]);
+
 export const migrateAssignments = (assignments: Record<string, string>): Record<string, string> => {
     const migrated: Record<string, string> = {};
     Object.entries(assignments).forEach(([key, sid]) => {
         const [taskId, ...rest] = key.split('::');
+        // 旧版上午眼操分配丢弃（留空）
+        if (LEGACY_EYE_AM_TASKS.has(taskId)) return;
         const newTaskId = taskId === 'clean-out' ? 'clean-out-1' : taskId;
         migrated[[newTaskId, ...rest].join('::')] = sid;
     });

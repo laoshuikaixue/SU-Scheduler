@@ -857,10 +857,10 @@ const App: React.FC = () => {
                         const desc = clonedDoc.getElementById('schedule-description');
                         if (desc) desc.style.display = 'none';
 
-                        // 1.0 更新标题
-                        const titleEl = clonedDoc.querySelector('h1');
+                        // 1.0 更新标题：只在导出区域内查找，避免命中页面顶部的应用标题 h1
+                        const titleEl = clonedDoc.querySelector('#schedule-export-area h1') as HTMLElement | null;
                         if (titleEl) {
-                            titleEl.innerText = exportTitle;
+                            titleEl.innerText = exportTitle.trim() || '学生会常规检查安排表';
                         }
 
                         // 1.1 隐藏校验信息 (如：部门职责不符)
