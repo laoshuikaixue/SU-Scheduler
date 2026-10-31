@@ -1,0 +1,4 @@
+# SPA 兜底规则（构建后会被复制到 dist/_redirects）
+# 与 netlify.toml 的 [[redirects]] 等价，用于「手动拖拽 dist 上传」的场景：
+# 那种部署方式不读 netlify.toml 的 [build]，但会读站点根目录的 _redirects
+/*  /index.html  200

@@ -1,0 +1,31 @@
+# Netlify 部署配置
+# 文档 https://docs.netlify.com/reference/configuration/overview/
+# 注意：本文件的设置优先级高于 Netlify UI 里的 Site settings，改了这里无需再去 UI 重复配置。
+
+[build]
+    # 构建命令：产物输出到 dist/
+    command = "npm run build"
+    # 关键：必须发布 dist 目录。留空或指向仓库根目录会导致线上加载 /index.tsx 而白屏
+    publish = "dist"
+
+[build.environment]
+    # Vite 6 要求 Node >= 18，固定 22 与本地环境行为一致
+    NODE_VERSION = "22"
+
+# SPA 兜底：任意路径（含刷新 / 深链）都回落到 index.html，避免 404
+[[redirects]]
+    from = "/*"
+    to = "/index.html"
+    status = 200
+
+# 带 hash 的构建产物可长期缓存
+[[headers]]
+    for = "/assets/*"
+    [headers.values]
+        Cache-Control = "public, max-age=31536000, immutable"
+
+# 入口文件不缓存，保证发版后用户立刻拿到新版本
+[[headers]]
+    for = "/index.html"
+    [headers.values]
+        Cache-Control = "public, max-age=0, must-revalidate"
